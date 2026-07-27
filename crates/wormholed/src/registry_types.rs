@@ -54,6 +54,8 @@ pub enum SessionCommand {
         /// Accepted public TCP connection.
         stream: TcpStream,
     },
+    /// Sends updated buffered queue counts to the owning client.
+    BufferedStatus { bind: Uuid, pending: u32, failed: u32 },
     /// Removes a bind deleted through the administration API from session ownership.
     RemoveBind {
         /// Stable bind identifier.

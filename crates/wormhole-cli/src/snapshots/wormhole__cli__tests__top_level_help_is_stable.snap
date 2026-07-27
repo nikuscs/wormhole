@@ -14,7 +14,8 @@ Commands:
   down         Stop project services or endpoint identifiers
   ls           List active endpoints
   status       Show daemon status
-  inspect      Inspect captured HTTP requests
+  inspect      Inspect one captured HTTP request
+  requests     List or manage captured HTTP requests
   replay       Replay one captured request
   interfaces   List discovered interface aliases
   remote       Manage named Wormhole remotes

@@ -1,25 +1,42 @@
 //! Local HTTP and TCP delivery for server-opened Wormhole data streams.
-
 use std::{convert::Infallible, error::Error, sync::Arc};
 
-use base64::{Engine as _, engine::general_purpose::STANDARD};
 use bytes::Bytes;
 use dashmap::DashMap;
-use http::{HeaderName, HeaderValue, Method, Request, Version};
-use http_body_util::{BodyExt, Full, StreamBody, combinators::UnsyncBoxBody};
+use http_body_util::{BodyExt, Full, combinators::UnsyncBoxBody};
 use hyper::{body::Frame, client::conn::http1};
 use hyper_util::rt::TokioIo;
+use tokio::sync::mpsc;
 use wormhole_proto::{
     codec::{read_stream_header, write_response_head},
-    frames::{HeaderField, HttpRequestHead, HttpResponseHead, StreamHeader},
+    frames::{HttpRequestHead, HttpResponseHead, StreamHeader},
 };
 
-use crate::{error::DriverError, wormhole_conn::EndpointHandle};
+use crate::{
+    capture::CaptureContext,
+    error::DriverError,
+    wormhole_conn::{ConnCommand, EndpointHandle},
+    wormhole_http::{build_request, request_is_upgrade, response_head},
+    wormhole_request_body::{request_body, request_body_with_prefix, retain_request_body},
+    wormhole_retry_response::{forward_spooled_response, spool_retry_response},
+};
 
-type BoxError = Box<dyn Error + Send + Sync>;
-type ClientBody = UnsyncBoxBody<Bytes, BoxError>;
+pub type BoxError = Box<dyn Error + Send + Sync>;
+pub type ClientBody = UnsyncBoxBody<Bytes, BoxError>;
 
-struct AbortTask(tokio::task::JoinHandle<()>);
+struct CaptureSink<'a> {
+    capture: Option<CaptureContext>,
+    events: &'a mpsc::Sender<crate::driver::DriverEvent>,
+}
+
+struct HttpDelivery<'a> {
+    target: crate::model::ResolvedTarget,
+    retry: Option<&'a crate::model::RetryPolicy>,
+    buffered: bool,
+    capture: CaptureSink<'a>,
+}
+
+pub struct AbortTask(tokio::task::JoinHandle<()>);
 
 impl Drop for AbortTask {
     fn drop(&mut self) {
@@ -71,38 +88,100 @@ pub async fn dispatch_stream(
         let _stopped = recv.stop(0_u32.into());
         return;
     };
-    if handle.inspect
-        && let StreamHeader::Http { bind, request, .. } = &header
-    {
-        let _captured = handle
-            .events
-            .send(crate::driver::DriverEvent::Captured(Box::new(crate::model::CapturedRequest {
-                bind_id: *bind,
-                method: request.method.clone(),
-                uri: request.uri.clone(),
-                captured_at: jiff::Timestamp::now(),
-            })))
-            .await;
-    }
+    let capture = if handle.inspect {
+        match &header {
+            StreamHeader::Http { bind, request, .. } => CaptureContext::eligible(
+                *bind,
+                request,
+                handle.inspect_assets,
+                handle.capture_body_max,
+            ),
+            StreamHeader::Tcp { .. } => None,
+        }
+    } else {
+        None
+    };
+    let buffered = match &header {
+        StreamHeader::Http { bind, buffered: Some(seq), .. } => Some((*bind, *seq)),
+        _ => None,
+    };
+    let retry = handle.retry.clone();
     let delivery = async {
         let _permit = permit;
         match header {
             StreamHeader::Http { request, .. } => {
-                deliver_http(send, recv, request, handle.target).await
+                deliver_http(
+                    send,
+                    recv,
+                    request,
+                    HttpDelivery {
+                        target: handle.target,
+                        retry: retry.as_ref(),
+                        buffered: buffered.is_some(),
+                        capture: CaptureSink { capture: capture.clone(), events: &handle.events },
+                    },
+                )
+                .await
             }
-            StreamHeader::Tcp { .. } => deliver_tcp(send, recv, handle.target).await,
+            StreamHeader::Tcp { .. } => deliver_tcp(send, recv, handle.target).await.map(|()| 0),
         }
     };
-    tokio::select! {
-        () = handle.stop.cancelled() => {}
-        result = delivery => {
-            if let Err(error) = result {
-                let _sent = handle.events.send(crate::driver::DriverEvent::Log(
-                    tracing::Level::WARN,
-                    error.to_string(),
-                )).await;
-            }
+    let result = tokio::select! {
+        () = handle.stop.cancelled() => Err(DriverError::Cancelled),
+        result = delivery => result,
+    };
+    if let Some(capture) = capture {
+        let delivery = match &result {
+            Ok(0) => "ok".to_owned(),
+            Ok(retries) => format!("retried({retries})"),
+            Err(_) => "failed".to_owned(),
+        };
+        if let Some(captured) = capture.finish_once(&delivery) {
+            let _captured =
+                handle.events.send(crate::driver::DriverEvent::Captured(Box::new(captured))).await;
         }
+    }
+    if let Some((bind, seq)) = buffered {
+        handle_buffered_result(&handle, bind, seq, result).await;
+    } else if let Err(error) = result {
+        let _sent = handle
+            .events
+            .send(crate::driver::DriverEvent::Log(tracing::Level::WARN, error.to_string()))
+            .await;
+    }
+}
+
+async fn handle_buffered_result(
+    handle: &EndpointHandle,
+    bind: uuid::Uuid,
+    seq: u64,
+    result: Result<u32, DriverError>,
+) {
+    let message = match result {
+        Ok(_) => Some(Ok(())),
+        Err(DriverError::LocalDelivery(error) | DriverError::LocalConnect(error)) => {
+            let _sent = handle
+                .events
+                .send(crate::driver::DriverEvent::Log(
+                    tracing::Level::WARN,
+                    format!("buffered webhook {seq} delivery exhausted: {error}"),
+                ))
+                .await;
+            Some(Err(error))
+        }
+        Err(error) => {
+            let _sent = handle
+                .events
+                .send(crate::driver::DriverEvent::Log(
+                    tracing::Level::WARN,
+                    format!("buffered webhook {seq} transport interrupted: {error}"),
+                ))
+                .await;
+            None
+        }
+    };
+    if let Some(result) = message {
+        let _sent = handle.commands.send(ConnCommand::BufferedResult { bind, seq, result }).await;
     }
 }
 
@@ -124,31 +203,112 @@ async fn deliver_tcp(
 }
 
 async fn deliver_http(
-    mut send: quinn::SendStream,
+    send: quinn::SendStream,
     recv: quinn::RecvStream,
     head: HttpRequestHead,
-    target: crate::model::ResolvedTarget,
-) -> Result<(), DriverError> {
+    delivery: HttpDelivery<'_>,
+) -> Result<u32, DriverError> {
     let upgrade = request_is_upgrade(&head);
-    let (body, retained_recv) = request_body(recv, upgrade);
+    if let Some(policy) = delivery.retry
+        && !upgrade
+    {
+        let (prefix, recv, complete) =
+            retain_request_body(recv, policy.max_body_bytes, delivery.capture.capture.clone())
+                .await?;
+        if complete {
+            return deliver_http_with_retry(
+                send,
+                head,
+                delivery.target,
+                delivery.capture,
+                policy,
+                prefix,
+                delivery.buffered,
+            )
+            .await;
+        }
+        let body = request_body_with_prefix(
+            prefix,
+            recv.expect("incomplete body stream"),
+            delivery.capture.capture.clone(),
+        );
+        return deliver_http_once(send, head, delivery.target, delivery.capture, body, None, false)
+            .await
+            .map(|()| 0);
+    }
+    let (body, retained_recv) = request_body(recv, upgrade, delivery.capture.capture.clone());
+    deliver_http_once(send, head, delivery.target, delivery.capture, body, retained_recv, upgrade)
+        .await
+        .map(|()| 0)
+}
+
+async fn deliver_http_once(
+    send: quinn::SendStream,
+    head: HttpRequestHead,
+    target: crate::model::ResolvedTarget,
+    capture: CaptureSink<'_>,
+    body: ClientBody,
+    retained_recv: Option<quinn::RecvStream>,
+    upgrade: bool,
+) -> Result<(), DriverError> {
+    let (response, connection_task) = http_attempt(head, target, body, upgrade).await?;
+    forward_response(send, response, connection_task, capture, retained_recv, upgrade, None).await
+}
+
+async fn http_attempt(
+    head: HttpRequestHead,
+    target: crate::model::ResolvedTarget,
+    body: ClientBody,
+    upgrade: bool,
+) -> Result<(hyper::Response<hyper::body::Incoming>, AbortTask), DriverError> {
     let stream = tokio::net::TcpStream::connect(target.0)
         .await
-        .map_err(|error| DriverError::Transport(error.to_string()))?;
+        .map_err(|error| DriverError::LocalConnect(error.to_string()))?;
     let (mut sender, connection) = http1::handshake(TokioIo::new(stream))
         .await
-        .map_err(|error| DriverError::Transport(error.to_string()))?;
-    let _connection_task = AbortTask(tokio::spawn(async move {
+        .map_err(|error| DriverError::LocalConnect(error.to_string()))?;
+    let connection_task = AbortTask(tokio::spawn(async move {
         let _completed = connection.with_upgrades().await;
     }));
     let request = build_request(head, body, upgrade)?;
-    let mut response = sender
-        .send_request(request)
-        .await
-        .map_err(|error| DriverError::Transport(error.to_string()))?;
-    let response_head = response_head(&response, upgrade);
-    write_response_head(&mut send, &response_head)
+    let response = sender.send_request(request).await.map_err(classify_send_error)?;
+    Ok((response, connection_task))
+}
+
+fn classify_send_error(error: hyper::Error) -> DriverError {
+    let mut source = error.source();
+    while let Some(current) = source {
+        if current.downcast_ref::<quinn::ReadError>().is_some() {
+            return DriverError::Transport(error.to_string());
+        }
+        source = current.source();
+    }
+    DriverError::LocalDelivery(error.to_string())
+}
+
+async fn forward_response(
+    mut send: quinn::SendStream,
+    mut response: hyper::Response<hyper::body::Incoming>,
+    _connection_task: AbortTask,
+    capture: CaptureSink<'_>,
+    retained_recv: Option<quinn::RecvStream>,
+    upgrade: bool,
+    deadline: Option<tokio::time::Instant>,
+) -> Result<(), DriverError> {
+    let head = response_head(&response, upgrade);
+    if let Some(capture) = &capture.capture {
+        capture.response_head(&head);
+    }
+    write_response_head(&mut send, &head)
         .await
         .map_err(|error| DriverError::Protocol(error.to_string()))?;
+    if response.status() == http::StatusCode::SWITCHING_PROTOCOLS
+        && let Some(captured) =
+            capture.capture.as_ref().and_then(|capture| capture.finish_once("ok"))
+    {
+        let _sent =
+            capture.events.send(crate::driver::DriverEvent::Captured(Box::new(captured))).await;
+    }
     if response.status() == http::StatusCode::SWITCHING_PROTOCOLS && upgrade {
         let public_recv = retained_recv.ok_or_else(|| {
             DriverError::Protocol("upgrade request lost its public receive stream".to_owned())
@@ -163,9 +323,11 @@ async fn deliver_http(
             .map_err(|error| DriverError::Transport(error.to_string()))?;
         return Ok(());
     }
-    while let Some(frame) = response.body_mut().frame().await {
-        let frame = frame.map_err(|error| DriverError::Transport(error.to_string()))?;
+    while let Some(frame) = next_response_frame(&mut response, deadline).await? {
         if let Ok(data) = frame.into_data() {
+            if let Some(capture) = &capture.capture {
+                capture.response_bytes(&data);
+            }
             send.write_all(&data)
                 .await
                 .map_err(|error| DriverError::Transport(error.to_string()))?;
@@ -175,136 +337,112 @@ async fn deliver_http(
     Ok(())
 }
 
-fn request_body(recv: quinn::RecvStream, upgrade: bool) -> (ClientBody, Option<quinn::RecvStream>) {
-    if upgrade {
-        let body = Full::new(Bytes::new())
+async fn deliver_http_with_retry(
+    mut send: quinn::SendStream,
+    head: HttpRequestHead,
+    target: crate::model::ResolvedTarget,
+    capture: CaptureSink<'_>,
+    policy: &crate::model::RetryPolicy,
+    body: Vec<u8>,
+    buffered: bool,
+) -> Result<u32, DriverError> {
+    let deadline = crate::retry::deadline(policy);
+    let attempts = policy.max_attempts.max(1);
+    for attempt in 0..attempts {
+        let request_body = Full::new(Bytes::copy_from_slice(&body))
             .map_err(|never: Infallible| -> BoxError { match never {} })
             .boxed_unsync();
-        return (body, Some(recv));
-    }
-    let stream = futures::stream::unfold(recv, |mut recv| async move {
-        let mut buffer = vec![0_u8; 16 * 1024];
-        match recv.read(&mut buffer).await {
-            Ok(None) => None,
-            Ok(Some(length)) => {
-                Some((Ok(Frame::data(Bytes::copy_from_slice(&buffer[..length]))), recv))
+        let result = tokio::time::timeout_at(
+            deadline,
+            http_attempt(head.clone(), target, request_body, false),
+        )
+        .await;
+        match result {
+            Ok(Ok((response, connection_task))) => {
+                let retry_status = policy.retry_5xx && response.status().is_server_error();
+                if !retry_status {
+                    forward_response(
+                        send,
+                        response,
+                        connection_task,
+                        capture,
+                        None,
+                        false,
+                        buffered.then_some(deadline),
+                    )
+                    .await?;
+                    return Ok(attempt);
+                }
+                match spool_retry_response(response, connection_task, deadline).await {
+                    Ok(response) if attempt + 1 == attempts => {
+                        forward_spooled_response(&mut send, response, capture.capture.as_ref())
+                            .await?;
+                        let _finished = send.finish();
+                        if buffered {
+                            return Err(DriverError::LocalDelivery(
+                                "buffered local delivery returned repeated 5xx".to_owned(),
+                            ));
+                        }
+                        return Ok(attempt);
+                    }
+                    Err(error) if attempt + 1 == attempts => {
+                        write_gateway_timeout(&mut send).await?;
+                        return Err(error);
+                    }
+                    Ok(_) | Err(_) => {}
+                }
             }
-            Err(error) => Some((Err::<Frame<Bytes>, BoxError>(Box::new(error)), recv)),
-        }
-    });
-    (BodyExt::boxed_unsync(StreamBody::new(stream)), None)
-}
-
-fn build_request(
-    head: HttpRequestHead,
-    body: ClientBody,
-    preserve_upgrade: bool,
-) -> Result<Request<ClientBody>, DriverError> {
-    let mut builder = Request::builder()
-        .method(Method::from_bytes(head.method.as_bytes()).map_err(protocol_error)?)
-        .uri(head.uri)
-        .version(parse_version(&head.version));
-    let connection_tokens = connection_tokens(&head.headers);
-    if let Some(headers) = builder.headers_mut() {
-        for field in head.headers {
-            let name = HeaderName::from_bytes(field.name.as_bytes()).map_err(protocol_error)?;
-            if should_strip(&name, &connection_tokens, preserve_upgrade) {
-                continue;
+            Ok(Err(DriverError::LocalConnect(_)))
+                if policy.retry_connect && attempt + 1 < attempts => {}
+            Ok(Err(error)) => {
+                write_gateway_timeout(&mut send).await?;
+                return Err(error);
             }
-            let value = STANDARD.decode(field.value_b64).map_err(protocol_error)?;
-            headers.append(name, HeaderValue::from_bytes(&value).map_err(protocol_error)?);
+            Err(_) => {
+                write_gateway_timeout(&mut send).await?;
+                return Err(DriverError::LocalDelivery(
+                    "local delivery deadline exceeded".to_owned(),
+                ));
+            }
+        }
+        if attempt + 1 < attempts {
+            let delay = crate::retry::retry_delay(policy, attempt);
+            if tokio::time::Instant::now() + delay >= deadline {
+                break;
+            }
+            tokio::time::sleep(delay).await;
         }
     }
-    builder.body(body).map_err(protocol_error)
+    write_gateway_timeout(&mut send).await?;
+    Err(DriverError::LocalDelivery("local delivery retries exhausted".to_owned()))
 }
 
-fn response_head(
-    response: &hyper::Response<hyper::body::Incoming>,
-    upgrade: bool,
-) -> HttpResponseHead {
-    let connection_tokens = response
-        .headers()
-        .get_all(http::header::CONNECTION)
-        .iter()
-        .filter_map(|value| value.to_str().ok())
-        .flat_map(|value| value.split(','))
-        .map(|token| token.trim().to_ascii_lowercase())
-        .collect::<Vec<_>>();
-    let mut headers = Vec::new();
-    for (name, value) in response.headers() {
-        if should_strip(name, &connection_tokens, upgrade) {
-            continue;
-        }
-        headers.push(HeaderField {
-            name: name.as_str().to_owned(),
-            value_b64: STANDARD.encode(value.as_bytes()),
-        });
-    }
-    HttpResponseHead {
-        status: response.status().as_u16(),
-        version: version_string(response.version()).to_owned(),
-        headers,
-    }
+async fn next_response_frame(
+    response: &mut hyper::Response<hyper::body::Incoming>,
+    deadline: Option<tokio::time::Instant>,
+) -> Result<Option<Frame<Bytes>>, DriverError> {
+    let next = response.body_mut().frame();
+    let frame = if let Some(deadline) = deadline {
+        tokio::time::timeout_at(deadline, next).await.map_err(|_| {
+            DriverError::LocalDelivery("local delivery deadline exceeded".to_owned())
+        })?
+    } else {
+        next.await
+    };
+    frame.transpose().map_err(|error| DriverError::LocalDelivery(error.to_string()))
 }
 
-fn request_is_upgrade(head: &HttpRequestHead) -> bool {
-    head.headers.iter().any(|field| field.name.eq_ignore_ascii_case("upgrade"))
-}
-
-fn connection_tokens(fields: &[HeaderField]) -> Vec<String> {
-    fields
-        .iter()
-        .filter(|field| field.name.eq_ignore_ascii_case("connection"))
-        .filter_map(|field| STANDARD.decode(&field.value_b64).ok())
-        .filter_map(|value| String::from_utf8(value).ok())
-        .flat_map(|value| {
-            value.split(',').map(str::trim).map(str::to_ascii_lowercase).collect::<Vec<_>>()
-        })
-        .collect()
-}
-
-fn should_strip(name: &HeaderName, connection_tokens: &[String], preserve_upgrade: bool) -> bool {
-    let upgrade_header = name == http::header::CONNECTION || name == http::header::UPGRADE;
-    (is_hop_header(name) || connection_tokens.iter().any(|token| token == name.as_str()))
-        && !(preserve_upgrade && upgrade_header)
-}
-
-fn is_hop_header(name: &HeaderName) -> bool {
-    matches!(
-        name.as_str(),
-        "connection"
-            | "keep-alive"
-            | "proxy-authenticate"
-            | "proxy-authorization"
-            | "te"
-            | "trailer"
-            | "transfer-encoding"
-            | "upgrade"
-    )
-}
-
-const fn version_string(version: Version) -> &'static str {
-    match version {
-        Version::HTTP_09 => "HTTP/0.9",
-        Version::HTTP_10 => "HTTP/1.0",
-        Version::HTTP_2 => "HTTP/2",
-        Version::HTTP_3 => "HTTP/3",
-        _ => "HTTP/1.1",
-    }
-}
-
-fn parse_version(version: &str) -> Version {
-    match version {
-        "HTTP/0.9" => Version::HTTP_09,
-        "HTTP/1.0" => Version::HTTP_10,
-        "HTTP/2" => Version::HTTP_2,
-        "HTTP/3" => Version::HTTP_3,
-        _ => Version::HTTP_11,
-    }
-}
-
-fn protocol_error(error: impl std::fmt::Display) -> DriverError {
-    DriverError::Protocol(error.to_string())
+async fn write_gateway_timeout(send: &mut quinn::SendStream) -> Result<(), DriverError> {
+    let head =
+        HttpResponseHead { status: 504, version: "HTTP/1.1".to_owned(), headers: Vec::new() };
+    write_response_head(send, &head)
+        .await
+        .map_err(|error| DriverError::Protocol(error.to_string()))?;
+    send.write_all(b"Gateway Timeout")
+        .await
+        .map_err(|error| DriverError::Transport(error.to_string()))?;
+    let _finished = send.finish();
+    Ok(())
 }
 
 #[cfg(test)]

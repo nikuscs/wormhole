@@ -19,7 +19,8 @@ coverage:
 	cargo llvm-cov --workspace --html
 
 e2e:
-	cargo test -p wormhole-e2e -- --ignored
+	cargo build -p wormhole-cli -p wormholed
+	cargo test -p wormhole-e2e -- --ignored --test-threads=4
 
 size:
 	@fail=0; \

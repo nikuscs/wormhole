@@ -112,10 +112,34 @@ pub struct ResolvedTarget(pub SocketAddr);
 /// Local HTTP delivery retry policy reserved for Stage 07 behavior.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct RetryPolicy {
-    /// Maximum delivery attempts.
     pub max_attempts: u32,
-    /// Initial delay in milliseconds.
     pub initial_delay_ms: u64,
+    #[serde(default = "default_retry_max_delay")]
+    pub max_delay_ms: u64,
+    #[serde(default = "default_retry_connect")]
+    pub retry_connect: bool,
+    #[serde(default)]
+    pub retry_5xx: bool,
+    #[serde(default = "default_retry_body")]
+    pub max_body_bytes: u64,
+    #[serde(default = "default_retry_deadline")]
+    pub total_deadline_ms: u64,
+}
+
+const fn default_retry_max_delay() -> u64 {
+    30_000
+}
+
+const fn default_retry_connect() -> bool {
+    true
+}
+
+const fn default_retry_body() -> u64 {
+    1024 * 1024
+}
+
+const fn default_retry_deadline() -> u64 {
+    60_000
 }
 
 /// One desired public exposure through one driver instance.
@@ -145,9 +169,19 @@ pub struct EndpointSpec {
     pub retry: Option<RetryPolicy>,
     /// Capture requests for inspection.
     pub inspect: bool,
+    /// Include static asset requests in inspection capture.
+    #[serde(default)]
+    pub inspect_assets: bool,
+    /// Maximum complete request body retained for inspection.
+    #[serde(default = "default_capture_body_max")]
+    pub capture_body_max: u64,
     /// Reservation used to reclaim a persistent Wormhole bind.
     #[serde(default)]
     pub reservation: Option<Uuid>,
+}
+
+const fn default_capture_body_max() -> u64 {
+    1024 * 1024
 }
 
 /// Current endpoint lifecycle status.
@@ -177,23 +211,64 @@ pub struct ActiveEndpoint {
     pub urls: Vec<String>,
     /// Current lifecycle status.
     pub status: EndpointStatus,
+    /// Number of buffered webhooks delivered in this daemon lifetime.
+    #[serde(default)]
+    pub buffered_delivered: u64,
+    /// Number waiting at the relay when last reported.
+    #[serde(default)]
+    pub buffered_pending: u32,
+    /// Number quarantined at the relay when last reported.
+    #[serde(default)]
+    pub buffered_failed: u32,
     /// Time this status record was created.
     #[schema(value_type = String, format = DateTime)]
     pub since: Timestamp,
 }
 
-/// Captured HTTP request metadata reserved for Stage 07 inspection.
+/// One redacted captured HTTP header.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct CapturedHeader {
+    pub name: String,
+    pub value_b64: String,
+}
+
+/// Memory-only captured HTTP exchange.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct CapturedRequest {
-    /// Endpoint bind identifier.
+    pub id: Uuid,
+    pub endpoint_id: Option<Uuid>,
     pub bind_id: Uuid,
-    /// Request method.
     pub method: String,
-    /// Request target.
     pub uri: String,
-    /// Capture timestamp.
+    pub headers: Vec<CapturedHeader>,
+    #[serde(with = "base64_bytes")]
+    #[schema(value_type = String)]
+    pub body: Vec<u8>,
+    pub body_truncated: bool,
+    pub response_status: Option<u16>,
+    pub response_headers: Vec<CapturedHeader>,
+    #[serde(with = "base64_bytes")]
+    #[schema(value_type = String)]
+    pub response_body_prefix: Vec<u8>,
+    pub response_body_truncated: bool,
+    pub duration_ms: u64,
+    pub delivery: String,
     #[schema(value_type = String, format = DateTime)]
     pub captured_at: Timestamp,
+}
+
+mod base64_bytes {
+    use base64::{Engine as _, engine::general_purpose::STANDARD};
+    use serde::{Deserialize as _, Deserializer, Serializer};
+
+    pub fn serialize<S: Serializer>(bytes: &[u8], serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&STANDARD.encode(bytes))
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<u8>, D::Error> {
+        let value = String::deserialize(deserializer)?;
+        STANDARD.decode(value).map_err(serde::de::Error::custom)
+    }
 }
 
 /// One manager status transition.

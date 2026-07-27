@@ -13,7 +13,7 @@ use wormhole_core::{
     EndpointSpec, Service,
     model::{RetryPolicy, ServiceProto},
 };
-use wormhole_proto::frames::{BufferPolicy, Persistence};
+use wormhole_proto::frames::{BufferPolicy, EdgeAuth, Persistence};
 
 use crate::{error::CliError, project_name, tunnel_commands::parse_target};
 
@@ -43,9 +43,11 @@ pub struct ProjectEndpoint {
     #[serde(default)]
     pub persist: bool,
     pub buffer: Option<ProjectBuffer>,
+    pub auth: Option<ProjectAuth>,
     pub retry: Option<ProjectRetry>,
-    #[serde(default)]
-    pub inspect: bool,
+    pub inspect: Option<bool>,
+    pub capture_assets: Option<bool>,
+    pub capture_body_max: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -56,9 +58,22 @@ pub struct ProjectBuffer {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct ProjectAuth {
+    pub basic: Option<String>,
+    pub bearer: Option<String>,
+    #[serde(default)]
+    pub links: bool,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct ProjectRetry {
     pub attempts: u32,
     pub backoff: String,
+    pub max_backoff: Option<String>,
+    #[serde(default)]
+    pub on: Vec<String>,
+    pub max_body: Option<String>,
+    pub total_deadline: Option<String>,
 }
 
 impl ProjectConfig {
@@ -72,6 +87,7 @@ impl ProjectConfig {
         &self,
         names: &[String],
         directory: &Path,
+        default_inspect: bool,
     ) -> Result<Vec<(Service, Vec<EndpointSpec>)>, CliError> {
         let mut selected = Vec::new();
         for service in &self.services {
@@ -82,7 +98,7 @@ impl ProjectConfig {
             let mut endpoints = service
                 .endpoints
                 .iter()
-                .map(|endpoint| endpoint.build(service.proto, directory))
+                .map(|endpoint| endpoint.build(service.proto, directory, default_inspect))
                 .collect::<Result<Vec<_>, _>>()?;
             if service.proto == ServiceProto::Http
                 && let Some(name) = self.name.as_deref()
@@ -106,7 +122,12 @@ impl ProjectConfig {
 }
 
 impl ProjectEndpoint {
-    fn build(&self, proto: ServiceProto, directory: &Path) -> Result<EndpointSpec, CliError> {
+    fn build(
+        &self,
+        proto: ServiceProto,
+        directory: &Path,
+        default_inspect: bool,
+    ) -> Result<EndpointSpec, CliError> {
         let (driver, qualifier) = self
             .driver
             .split_once(':')
@@ -114,6 +135,7 @@ impl ProjectEndpoint {
                 (driver, Some(qualifier.to_owned()))
             });
         let buffer = self.buffer.as_ref().map(ProjectBuffer::build).transpose()?;
+        let auth = self.auth.as_ref().map(ProjectAuth::build).transpose()?;
         let retry = self.retry.as_ref().map(ProjectRetry::build).transpose()?;
         Ok(EndpointSpec {
             proto,
@@ -125,9 +147,16 @@ impl ProjectEndpoint {
             public_port: self.public_port,
             persist: if self.persist { Persistence::Persistent } else { Persistence::Temporary },
             buffer,
-            auth: None,
+            auth,
             retry,
-            inspect: self.inspect,
+            inspect: self.inspect.unwrap_or(default_inspect),
+            inspect_assets: self.capture_assets.unwrap_or(false),
+            capture_body_max: self
+                .capture_body_max
+                .as_deref()
+                .map(parse_bytes)
+                .transpose()?
+                .unwrap_or(1024 * 1024),
             reservation: None,
         })
     }
@@ -145,16 +174,59 @@ impl ProjectBuffer {
     }
 }
 
+impl ProjectAuth {
+    fn build(&self) -> Result<EdgeAuth, CliError> {
+        if self.basic.as_ref().is_some_and(|value| value.split_once(':').is_none()) {
+            return Err(CliError::Invalid("project basic auth must be user:password".to_owned()));
+        }
+        if self.bearer.as_ref().is_some_and(String::is_empty) {
+            return Err(CliError::Invalid("project bearer auth must not be empty".to_owned()));
+        }
+        Ok(EdgeAuth {
+            basic: self.basic.clone(),
+            bearer: self.bearer.clone(),
+            link_key: self.links.then(wormhole_core::share::generate_link_key),
+        })
+    }
+}
+
 impl ProjectRetry {
     fn build(&self) -> Result<RetryPolicy, CliError> {
         let delay = humantime::parse_duration(&self.backoff)
             .map_err(|error| CliError::Invalid(error.to_string()))?;
+        let duration_ms = |value: &str| -> Result<u64, CliError> {
+            humantime::parse_duration(value)
+                .map_err(|error| CliError::Invalid(error.to_string()))?
+                .as_millis()
+                .try_into()
+                .map_err(|error| CliError::Invalid(format!("retry duration: {error}")))
+        };
         Ok(RetryPolicy {
             max_attempts: self.attempts,
             initial_delay_ms: delay
                 .as_millis()
                 .try_into()
                 .map_err(|error| CliError::Invalid(format!("retry backoff: {error}")))?,
+            max_delay_ms: self
+                .max_backoff
+                .as_deref()
+                .map(duration_ms)
+                .transpose()?
+                .unwrap_or(30_000),
+            retry_connect: self.on.is_empty() || self.on.iter().any(|item| item == "connect-error"),
+            retry_5xx: self.on.iter().any(|item| item == "5xx"),
+            max_body_bytes: self
+                .max_body
+                .as_deref()
+                .map(parse_bytes)
+                .transpose()?
+                .unwrap_or(1024 * 1024),
+            total_deadline_ms: self
+                .total_deadline
+                .as_deref()
+                .map(duration_ms)
+                .transpose()?
+                .unwrap_or(60_000),
         })
     }
 }
@@ -180,7 +252,7 @@ fn git_root(directory: &Path) -> Option<PathBuf> {
     output.status.success().then(|| PathBuf::from(String::from_utf8_lossy(&output.stdout).trim()))
 }
 
-fn parse_bytes(value: &str) -> Result<u64, CliError> {
+pub fn parse_bytes(value: &str) -> Result<u64, CliError> {
     let split = value.find(|character: char| !character.is_ascii_digit()).unwrap_or(value.len());
     let (number, suffix) = value.split_at(split);
     let number = number

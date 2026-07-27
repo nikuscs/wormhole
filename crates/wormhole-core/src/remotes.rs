@@ -11,6 +11,9 @@ use crate::error::ConfigError;
 /// One named Wormhole relay.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct Remote {
+    /// Preferred control transport.
+    #[serde(default)]
+    pub transport: Transport,
     /// UDP authority of the relay.
     pub addr: String,
     /// TLS and handshake-bound server name.
@@ -27,10 +30,20 @@ pub struct Remote {
     pub(crate) extra: std::collections::BTreeMap<String, toml::Value>,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum Transport {
+    #[default]
+    Auto,
+    Quic,
+    Ws,
+}
+
 impl Remote {
     /// Creates a named-remote value for configuration editors.
     pub const fn new(addr: String, server_name: String, identity: Option<Utf8PathBuf>) -> Self {
         Self {
+            transport: Transport::Auto,
             addr,
             server_name,
             trusted_ca: None,

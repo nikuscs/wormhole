@@ -65,7 +65,8 @@ impl Modify for SecurityAddon {
     crate::future_api::requests,
     crate::future_api::request,
     crate::future_api::replay,
-    crate::future_api::clear_requests
+    crate::future_api::clear_requests,
+    crate::share_api::share
 ))]
 pub struct LocalApi;
 
@@ -87,6 +88,7 @@ pub fn router(state: ApiState) -> Router {
         .route("/v1/requests/{id}/replay", post(crate::future_api::replay))
         .route("/v1/shutdown", post(shutdown))
         .route("/v1/reload", post(reload))
+        .route("/v1/share", post(crate::share_api::share))
         .route("/v1/openapi.json", get(openapi_json))
         .merge(Scalar::with_url("/docs", openapi))
         .layer(middleware::from_fn_with_state(state.clone(), authorize))

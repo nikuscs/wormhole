@@ -233,6 +233,11 @@ impl TunnelDriver for WormholeDriver {
                 }
             }
             crate::model::ServiceProto::Tcp => {
+                if spec.buffer.is_some() {
+                    return Err(DriverError::Capability(
+                        "Wormhole TCP endpoints do not accept buffering".to_owned(),
+                    ));
+                }
                 if spec.host.is_some() || spec.domain.is_some() {
                     return Err(DriverError::Capability(
                         "Wormhole TCP endpoints do not accept host or domain".to_owned(),

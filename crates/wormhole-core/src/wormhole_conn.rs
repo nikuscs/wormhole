@@ -1,6 +1,12 @@
 //! Shared authenticated QUIC connection actor for one named remote.
-
-use std::{collections::HashMap, sync::Arc, time::Duration};
+use std::{
+    collections::HashMap,
+    sync::{
+        Arc,
+        atomic::{AtomicU32, Ordering},
+    },
+    time::Duration,
+};
 
 use dashmap::DashMap;
 use tokio::sync::{Semaphore, mpsc, oneshot, watch};
@@ -9,32 +15,20 @@ use uuid::Uuid;
 use wormhole_proto::{
     Identity,
     codec::ControlChannel,
-    frames::{BindSpec, ControlFrame, EventKind},
+    frames::{ControlFrame, EventKind},
 };
 
 use crate::{
     driver::DriverEvent,
     error::DriverError,
-    model::{EndpointSpec, EndpointStatus, ResolvedTarget, ServiceProto},
+    model::{EndpointSpec, EndpointStatus, ResolvedTarget},
     remotes::Remote,
+    wormhole_bind::{bind_spec, should_forget_bind, should_forget_cancelled},
     wormhole_stream::accept_streams,
     wormhole_transport::{QuicIo, connect_remote},
 };
 
-pub struct EndpointHandle {
-    pub target: ResolvedTarget,
-    pub semaphore: Arc<Semaphore>,
-    pub stop: CancellationToken,
-    pub forget: watch::Receiver<bool>,
-    pub events: mpsc::Sender<DriverEvent>,
-    pub inspect: bool,
-}
-
-pub struct BindLease {
-    pub bind: Uuid,
-    pub reservation: Option<Uuid>,
-    pub closed: watch::Receiver<bool>,
-}
+pub use crate::wormhole_conn_types::{BindLease, EndpointHandle};
 
 pub struct RemoteConn {
     _endpoint: quinn::Endpoint,
@@ -123,7 +117,7 @@ impl RemoteConn {
     }
 }
 
-enum ConnCommand {
+pub enum ConnCommand {
     Bind {
         spec: Box<EndpointSpec>,
         target: ResolvedTarget,
@@ -140,6 +134,11 @@ enum ConnCommand {
     ForgetReservation {
         reservation: Uuid,
         reply: oneshot::Sender<()>,
+    },
+    BufferedResult {
+        bind: Uuid,
+        seq: u64,
+        result: Result<(), String>,
     },
     ShutdownIfIdle,
     Shutdown,
@@ -259,6 +258,12 @@ async fn handle_command(
                 forget,
                 events,
                 inspect: spec.inspect,
+                inspect_assets: spec.inspect_assets,
+                capture_body_max: spec.capture_body_max,
+                retry: spec.retry.clone(),
+                buffered_pending: AtomicU32::new(0),
+                buffered_failed: AtomicU32::new(0),
+                commands: command_tx.clone(),
             });
             pending.insert(request, PendingBind { handle, forget_on_cancel, reply });
             channel
@@ -288,6 +293,17 @@ async fn handle_command(
                 .await
                 .map_err(|error| DriverError::Protocol(error.to_string()))?;
         }
+        ConnCommand::BufferedResult { bind, seq, result } => {
+            let delivered = result.is_ok();
+            let frame = match result {
+                Ok(()) => ControlFrame::AckBuffered { bind, seq },
+                Err(reason) => ControlFrame::NackBuffered { bind, seq, reason },
+            };
+            channel.send(&frame).await.map_err(|error| DriverError::Protocol(error.to_string()))?;
+            if let Some(handle) = binds.get(&bind) {
+                let _sent = handle.events.try_send(handle.record_buffered_result(delivered));
+            }
+        }
         ConnCommand::ShutdownIfIdle => return Ok(binds.is_empty()),
         ConnCommand::Shutdown => return Ok(true),
     }
@@ -307,9 +323,23 @@ async fn handle_frame(
     missed_pongs: &mut u8,
 ) -> Result<(), DriverError> {
     match frame {
-        ControlFrame::Bound { request, bind, urls, reservation, .. } => {
-            handle_bound(channel, (request, bind, urls, reservation), binds, pending, activating)
-                .await?;
+        ControlFrame::Bound {
+            request,
+            bind,
+            urls,
+            reservation,
+            pending_buffered,
+            failed_buffered,
+            ..
+        } => {
+            handle_bound(
+                channel,
+                (request, bind, urls, reservation, pending_buffered, failed_buffered),
+                binds,
+                pending,
+                activating,
+            )
+            .await?;
         }
         ControlFrame::BindActive { bind } => {
             handle_active(channel, bind, binds, activating, closed).await?;
@@ -330,6 +360,12 @@ async fn handle_frame(
             }
         }
         ControlFrame::Pong { .. } => *missed_pongs = 0,
+        ControlFrame::BufferedStatus { bind, pending, failed } => {
+            let handle = binds.get(&bind).ok_or_else(|| {
+                DriverError::Protocol(format!("buffered status has unknown bind id: {bind}"))
+            })?;
+            let _sent = handle.events.try_send(handle.record_buffered_status(pending, failed));
+        }
         ControlFrame::Event { kind: EventKind::Shutdown, msg } => {
             return Err(DriverError::Transport(msg));
         }
@@ -351,12 +387,12 @@ async fn handle_frame(
 
 async fn handle_bound(
     channel: &mut ControlChannel<QuicIo>,
-    details: (Uuid, Uuid, Vec<String>, Option<Uuid>),
+    details: (Uuid, Uuid, Vec<String>, Option<Uuid>, u32, u32),
     binds: &DashMap<Uuid, Arc<EndpointHandle>>,
     pending: &mut HashMap<Uuid, PendingBind>,
     activating: &mut HashMap<Uuid, ActivatingBind>,
 ) -> Result<(), DriverError> {
-    let (request, bind, urls, reservation) = details;
+    let (request, bind, urls, reservation, buffered_pending, buffered_failed) = details;
     let pending = pending
         .remove(&request)
         .ok_or_else(|| DriverError::Protocol(format!("Bound has unknown request id: {request}")))?;
@@ -370,6 +406,13 @@ async fn handle_bound(
         let _sent = pending.reply.send(Err(DriverError::Cancelled));
         return Ok(());
     }
+    pending.handle.buffered_pending.store(buffered_pending, Ordering::Release);
+    pending.handle.buffered_failed.store(buffered_failed, Ordering::Release);
+    let _sent = pending.handle.events.try_send(DriverEvent::BufferedDelivery {
+        pending: buffered_pending,
+        failed: buffered_failed,
+        delivered_delta: 0,
+    });
     binds.insert(bind, pending.handle);
     activating.insert(
         bind,
@@ -450,27 +493,6 @@ async fn cancel_active(
         .map_err(|error| DriverError::Protocol(error.to_string()))?;
     let _sent = active.reply.send(Err(DriverError::Cancelled));
     Ok(())
-}
-
-const fn should_forget_cancelled(reservation: Option<Uuid>) -> bool {
-    reservation.is_none()
-}
-
-const fn should_forget_bind(default: bool, requested: bool) -> bool {
-    default || requested
-}
-
-fn bind_spec(spec: &EndpointSpec) -> BindSpec {
-    match spec.proto {
-        ServiceProto::Http => BindSpec::Http {
-            host: spec.host.clone(),
-            domain: spec.domain.clone(),
-            persist: spec.persist,
-            buffer: spec.buffer.clone(),
-            auth: spec.auth.clone(),
-        },
-        ServiceProto::Tcp => BindSpec::Tcp { remote_port: spec.public_port, persist: spec.persist },
-    }
 }
 
 #[cfg(test)]

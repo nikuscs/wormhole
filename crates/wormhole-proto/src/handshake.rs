@@ -279,6 +279,7 @@ const fn frame_name(frame: &ControlFrame) -> &'static str {
         ControlFrame::Bound { .. } => "bound",
         ControlFrame::BindError { .. } => "bind_error",
         ControlFrame::BindActive { .. } => "bind_active",
+        ControlFrame::BufferedStatus { .. } => "buffered_status",
         ControlFrame::Event { .. } => "event",
         ControlFrame::AckBuffered { .. } => "ack_buffered",
         ControlFrame::NackBuffered { .. } => "nack_buffered",

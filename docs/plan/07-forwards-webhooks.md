@@ -104,7 +104,7 @@ Inspection (client-side, in the daemon; ngrok-4040 parity):
 
 ## Tasks
 
-- [ ] **W1 — Server: persistent bind lifecycle** (`wormholed`). Implement reclaim-on-reconnect
+- [x] **W1 — Server: persistent bind lifecycle** (`wormholed`). Implement reclaim-on-reconnect
   end-to-end (S5 defined it): `Bind { reservation: Some(id) }` with matching key fingerprint →
   adopt the Offline persisted row (works for random hostnames); an Online row rejects duplicate
   reclaim. Update `last_seen`. `Unbind { forget: true }` drops the reservation row. Offline persistent host →
@@ -115,7 +115,7 @@ Inspection (client-side, in the daemon; ngrok-4040 parity):
   survives, rebind by reservation reclaims the same hostname, other key's reservation refused,
   `binds ls` shows it, `forget` removes it.
 
-- [ ] **W2 — Server: webhook buffer.** `buffer.rs` in wormholed: store/drain per the semantics
+- [x] **W2 — Server: webhook buffer.** `buffer.rs` in wormholed: store/drain per the semantics
   above (durable-commit-before-202, atomic quotas, serialized per-bind drain, delete-on-
   `AckBuffered`, quarantine-on-`NackBuffered`). Add `GET /v1/webhooks/failed`,
   `POST /v1/webhooks/failed/{bind}/{seq}/retry`, and matching DELETE to the local admin API +
@@ -128,7 +128,7 @@ Inspection (client-side, in the daemon; ngrok-4040 parity):
   server right after a 202 → webhook still present after restart; TTL expiry with 1s ttl;
   global byte quota rejection.
 
-- [ ] **W3 — Client: buffered delivery + ack.** The wormhole driver implements the ack side:
+- [x] **W3 — Client: buffered delivery + ack.** The wormhole driver implements the ack side:
   forward buffered stream to the local app, await complete response, send
   `AckBuffered { bind, seq }`; retry/deadline exhaustion sends `NackBuffered`. Daemon counts
   deliveries per endpoint; expose in `GET /v1/endpoints` (`buffered_delivered`,
@@ -137,7 +137,7 @@ Inspection (client-side, in the daemon; ngrok-4040 parity):
   Validation: extend W2 e2e through the real client daemon (moves to stage 08 harness if
   simpler; leave a pointer).
 
-- [ ] **W4 — Inspection capture.** In the HTTP-aware `wormhole_driver.rs` path, collect from the
+- [x] **W4 — Inspection capture.** In the HTTP-aware `wormhole_driver.rs` path, collect from the
   typed request/response heads and bounded body taps into `CapturedRequest { id: uuid_v7,
   endpoint, ts, method, path, headers, body, body_truncated, resp_status, resp_headers,
   resp_body_prefix, resp_body_truncated, duration, delivery }`. Apply the static-asset filter
@@ -150,7 +150,7 @@ Inspection (client-side, in the daemon; ngrok-4040 parity):
   Validation: typed-stream tests cover full replayable body, >1 MiB truncation/non-replayable,
   static asset ignored/default + included/override, header redaction, and 101 capture cutoff.
 
-- [ ] **W5 — Local API + CLI for requests.** Implement the stage-05 stubs: `GET /v1/requests`
+- [x] **W5 — Local API + CLI for requests.** Implement the stage-05 stubs: `GET /v1/requests`
   (filters: endpoint, since, limit), `GET /v1/requests/{id}` (bodies base64),
   `POST /v1/requests/{id}/replay` — daemon re-sends the captured request to the endpoint's
   current local target (Hyper client, 30s timeout), returns new status/duration. Reject replay
@@ -162,14 +162,14 @@ Inspection (client-side, in the daemon; ngrok-4040 parity):
   request through, appears in `wormhole requests --json`, replay returns 200 and the echo
   server saw it twice. Full-binary variant lands in the stage-08 harness.
 
-- [ ] **W6 — Docs.** `docs/webhooks.md`: the semantics table above, buffering guarantees
+- [x] **W6 — Docs.** `docs/webhooks.md`: the semantics table above, buffering guarantees
   (at-least-once on reconnect, original caller sees 202, ordering), retry semantics
   (when `5xx` retry is safe vs not — idempotency warning), inspection scope
   (wormhole driver only), worked Stripe-style example: persist + buffer + retry + `wormhole
   requests --follow` + replay loop for an agent.
   Validation: commands in doc exist.
 
-- [ ] **W7 — Local delivery retry engine** (client, `wormhole-core`). One reusable
+- [x] **W7 — Local delivery retry engine** (client, `wormhole-core`). One reusable
   `RetryPolicy { attempts, backoff, max_backoff, on, max_body, total_deadline }` (serde,
   humantime durations) + `deliver_with_retry(req, target, policy)` used by both the live proxy
   path and the buffered-replay path in `wormhole_driver.rs`, per the "Local delivery retries"
@@ -184,7 +184,7 @@ Inspection (client-side, in the daemon; ngrok-4040 parity):
   buffered replay exhaustion → `NackBuffered` + durable server failed row while later seq
   drains; oversized body streams once with no retry.
 
-- [ ] **W8 — Edge auth + signed share links.** Server: enforce `EdgeAuth` in `edge_https.rs`
+- [x] **W8 — Edge auth + signed share links.** Server: enforce `EdgeAuth` in `edge_https.rs`
   per the semantics above on **every** Hyper request (module `edge_auth.rs`; before buffering
   or opening a client stream). Convert wire auth secrets to `PersistedEdgeAuth` verifiers before
   writing redb; persisted bind specs contain no raw basic/bearer secret, and

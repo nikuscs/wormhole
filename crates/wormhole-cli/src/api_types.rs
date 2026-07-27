@@ -29,6 +29,7 @@ pub struct ApiState {
     pub bindings: Arc<RwLock<HashMap<Uuid, (String, usize)>>>,
     pub persistence_lock: Arc<Mutex<()>>,
     pub expose_lock: Arc<Mutex<()>>,
+    pub captures: Arc<RwLock<crate::capture_store::CaptureStore>>,
     pub started: jiff::Timestamp,
     pub shutdown: CancellationToken,
     pub token: Arc<str>,
@@ -83,6 +84,14 @@ pub struct ApiError {
 }
 
 impl ApiError {
+    pub fn invalid(message: impl Into<String>) -> Self {
+        Self { status: StatusCode::BAD_REQUEST, code: "invalid", message: message.into() }
+    }
+
+    pub fn not_found(message: impl Into<String>) -> Self {
+        Self { status: StatusCode::NOT_FOUND, code: "not_found", message: message.into() }
+    }
+
     pub fn conflict(message: impl Into<String>) -> Self {
         Self { status: StatusCode::CONFLICT, code: "conflict", message: message.into() }
     }

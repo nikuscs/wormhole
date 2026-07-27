@@ -1,12 +1,23 @@
 //! Edge authentication using live credentials or persisted verification material.
 
 use argon2::{Argon2, PasswordHash, PasswordVerifier};
-use base64::{Engine as _, engine::general_purpose::STANDARD};
+use base64::{
+    Engine as _,
+    engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD},
+};
+use hmac::{Hmac, Mac as _};
 use hyper::{Request, body::Incoming};
 use sha2::{Digest, Sha256};
 use subtle::ConstantTimeEq;
 
 use crate::registry::BindHandle;
+
+pub enum LinkDecision {
+    NotConfigured,
+    Authorized,
+    Redirect { location: String, cookie: String },
+    Denied,
+}
 
 static BASIC_AUTH_SLOTS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(16);
 
@@ -46,7 +57,7 @@ pub async fn authorized(request: &Request<Incoming>, handle: &BindHandle) -> boo
     let Ok(decoded) = STANDARD.decode(encoded) else {
         return false;
     };
-    let Ok(permit) = BASIC_AUTH_SLOTS.try_acquire() else {
+    let Ok(permit) = BASIC_AUTH_SLOTS.acquire().await else {
         return false;
     };
     tokio::task::spawn_blocking(move || {
@@ -55,6 +66,75 @@ pub async fn authorized(request: &Request<Incoming>, handle: &BindHandle) -> boo
     })
     .await
     .unwrap_or(false)
+}
+
+pub fn link_decision<B>(request: &Request<B>, handle: &BindHandle, host: &str) -> LinkDecision {
+    let encoded_key = handle
+        .auth
+        .as_ref()
+        .and_then(|auth| auth.link_key.clone())
+        .or_else(|| handle.auth_verifier().and_then(|verifier| verifier.link_hmac_key));
+    let Some(encoded_key) = encoded_key else {
+        return LinkDecision::NotConfigured;
+    };
+    let Ok(key) = STANDARD.decode(&encoded_key) else {
+        return LinkDecision::Denied;
+    };
+    if let Some(token) = query_token(request.uri().query()) {
+        let Some(expiry) = verify_link_token(token, host, &key) else {
+            return LinkDecision::Denied;
+        };
+        let location = without_token(request.uri());
+        let cookie = format!(
+            "wormhole_auth={token}; Path=/; Max-Age={}; Secure; HttpOnly; SameSite=Lax",
+            expiry.saturating_sub(jiff::Timestamp::now().as_second()).max(0)
+        );
+        return LinkDecision::Redirect { location, cookie };
+    }
+    let cookie =
+        request.headers().get(http::header::COOKIE).and_then(|value| value.to_str().ok()).and_then(
+            |cookies| {
+                cookies.split(';').find_map(|cookie| cookie.trim().strip_prefix("wormhole_auth="))
+            },
+        );
+    if cookie.is_some_and(|token| verify_link_token(token, host, &key).is_some()) {
+        LinkDecision::Authorized
+    } else {
+        LinkDecision::Denied
+    }
+}
+
+fn query_token(query: Option<&str>) -> Option<&str> {
+    query?.split('&').find_map(|part| part.strip_prefix("wh_token="))
+}
+
+fn without_token(uri: &http::Uri) -> String {
+    let path = uri.path();
+    let query = uri
+        .query()
+        .map(|query| {
+            query
+                .split('&')
+                .filter(|part| !part.starts_with("wh_token="))
+                .collect::<Vec<_>>()
+                .join("&")
+        })
+        .filter(|query| !query.is_empty());
+    query.map_or_else(|| path.to_owned(), |query| format!("{path}?{query}"))
+}
+
+fn verify_link_token(token: &str, host: &str, key: &[u8]) -> Option<i64> {
+    let decoded = URL_SAFE_NO_PAD.decode(token).ok()?;
+    let expiry = i64::from_be_bytes(decoded.get(..8)?.try_into().ok()?);
+    if expiry < jiff::Timestamp::now().as_second() {
+        return None;
+    }
+    let supplied = decoded.get(8..)?;
+    let mut mac = Hmac::<Sha256>::new_from_slice(key).ok()?;
+    mac.update(host.as_bytes());
+    mac.update(&expiry.to_be_bytes());
+    let expected = mac.finalize().into_bytes();
+    constant_time_eq(supplied, &expected).then_some(expiry)
 }
 
 fn verify_basic(stored: &str, provided: &[u8]) -> bool {

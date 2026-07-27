@@ -5,11 +5,13 @@ expression: encoded
 default_remote = "myvps"
 
 [remotes.myvps]
+transport = "auto"
 addr = "tun.example.com:443"
 server_name = "tun.example.com"
 trusted_ca = "/tmp/ca.pem"
 
 [remotes.work]
+transport = "auto"
 addr = "wh.corp.example:443"
 server_name = "wh.corp.example"
 identity = "/tmp/work.key"

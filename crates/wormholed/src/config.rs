@@ -326,7 +326,7 @@ fn require_file(path: &Utf8Path, kind: &str) -> Result<(), ConfigError> {
     Ok(())
 }
 
-fn parse_byte_size(value: &str) -> Result<u64, ConfigError> {
+pub fn parse_byte_size(value: &str) -> Result<u64, ConfigError> {
     let (number, multiplier) = if let Some(number) = value.strip_suffix("MiB") {
         (number, 1024_u64.pow(2))
     } else if let Some(number) = value.strip_suffix("GiB") {

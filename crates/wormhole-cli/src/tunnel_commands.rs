@@ -105,7 +105,12 @@ pub async fn build_specs(
         return Err(CliError::Invalid("no endpoint drivers configured".to_owned()));
     }
     let auth = parse_auth(options).await?;
-    let retry = options.retry.as_deref().map(parse_retry).transpose()?;
+    let retry = options
+        .retry
+        .as_deref()
+        .map(parse_retry)
+        .transpose()?
+        .or_else(|| config.defaults.retry.clone());
     let buffer = options.buffer.map(|max_requests| BufferPolicy {
         max_requests,
         max_body_bytes: 1024 * 1024,
@@ -138,7 +143,9 @@ pub async fn build_specs(
                 buffer: buffer.clone(),
                 auth: auth.clone(),
                 retry: retry.clone(),
-                inspect: !options.no_inspect && config.defaults.inspect,
+                inspect: !options.capture.no_inspect && config.defaults.inspect,
+                inspect_assets: options.capture.include_assets,
+                capture_body_max: options.capture.capture_body_max,
                 reservation: None,
             })
         })
@@ -146,12 +153,25 @@ pub async fn build_specs(
 }
 
 async fn parse_auth(options: &TunnelOptions) -> Result<Option<EdgeAuth>, CliError> {
-    let value = if let Some(path) = &options.auth_file {
-        Some(tokio::fs::read_to_string(path).await.map_err(CliError::Io)?.trim().to_owned())
+    let values = if let Some(path) = &options.auth_file {
+        vec![tokio::fs::read_to_string(path).await.map_err(CliError::Io)?.trim().to_owned()]
     } else {
         options.auth.clone()
     };
-    value.as_deref().map(parse_auth_value).transpose()
+    let mut combined = EdgeAuth { basic: None, bearer: None, link_key: None };
+    for value in values {
+        let parsed = parse_auth_value(&value)?;
+        if parsed.basic.is_some() && combined.basic.replace(parsed.basic.expect("basic")).is_some()
+            || parsed.bearer.is_some()
+                && combined.bearer.replace(parsed.bearer.expect("bearer")).is_some()
+            || parsed.link_key.is_some()
+                && combined.link_key.replace(parsed.link_key.expect("link key")).is_some()
+        {
+            return Err(CliError::Invalid("duplicate auth method".to_owned()));
+        }
+    }
+    Ok((combined.basic.is_some() || combined.bearer.is_some() || combined.link_key.is_some())
+        .then_some(combined))
 }
 
 fn parse_auth_value(value: &str) -> Result<EdgeAuth, CliError> {
@@ -160,17 +180,29 @@ fn parse_auth_value(value: &str) -> Result<EdgeAuth, CliError> {
     {
         return Ok(EdgeAuth { basic: Some(credential.to_owned()), bearer: None, link_key: None });
     }
+    if value == "links" {
+        return Ok(EdgeAuth {
+            basic: None,
+            bearer: None,
+            link_key: Some(wormhole_core::share::generate_link_key()),
+        });
+    }
     if let Some(token) = value.strip_prefix("bearer:")
         && !token.is_empty()
     {
         return Ok(EdgeAuth { basic: None, bearer: Some(token.to_owned()), link_key: None });
     }
-    Err(CliError::Invalid("auth must be basic:user:pass or bearer:secret".to_owned()))
+    Err(CliError::Invalid("auth must be basic:user:pass, bearer:secret, or links".to_owned()))
 }
 
 fn parse_retry(value: &str) -> Result<RetryPolicy, CliError> {
     let mut attempts = None;
     let mut delay = None;
+    let mut max_delay = 30_000;
+    let mut retry_connect = true;
+    let mut retry_5xx = false;
+    let mut max_body = 1024 * 1024;
+    let mut deadline = 60_000;
     for item in value.split(',') {
         let (key, value) = item
             .split_once('=')
@@ -181,6 +213,25 @@ fn parse_retry(value: &str) -> Result<RetryPolicy, CliError> {
                 let duration = humantime::parse_duration(value).map_err(invalid_retry)?;
                 delay = Some(duration.as_millis().try_into().map_err(invalid_retry)?);
             }
+            "max_backoff" => {
+                max_delay = humantime::parse_duration(value)
+                    .map_err(invalid_retry)?
+                    .as_millis()
+                    .try_into()
+                    .map_err(invalid_retry)?;
+            }
+            "on" => {
+                retry_connect = value.split('+').any(|item| item == "connect-error");
+                retry_5xx = value.split('+').any(|item| item == "5xx");
+            }
+            "max_body" => max_body = crate::project::parse_bytes(value)?,
+            "total_deadline" => {
+                deadline = humantime::parse_duration(value)
+                    .map_err(invalid_retry)?
+                    .as_millis()
+                    .try_into()
+                    .map_err(invalid_retry)?;
+            }
             _ => return Err(CliError::Invalid(format!("unknown retry key: {key}"))),
         }
     }
@@ -189,6 +240,11 @@ fn parse_retry(value: &str) -> Result<RetryPolicy, CliError> {
             .ok_or_else(|| CliError::Invalid("retry attempts missing".to_owned()))?,
         initial_delay_ms: delay
             .ok_or_else(|| CliError::Invalid("retry backoff missing".to_owned()))?,
+        max_delay_ms: max_delay,
+        retry_connect,
+        retry_5xx,
+        max_body_bytes: max_body,
+        total_deadline_ms: deadline,
     })
 }
 

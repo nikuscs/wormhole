@@ -2,6 +2,8 @@
 
 use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
+
+use crate::buffer::BufferedRequest;
 use uuid::Uuid;
 use wormhole_proto::frames::{BufferPolicy, Persistence};
 
@@ -76,8 +78,8 @@ pub struct AuthorizedKey {
 /// Durable failed webhook payload used by Stage 07.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FailedWebhook {
-    /// Raw serialized request.
-    pub request: Vec<u8>,
+    /// Original buffered request.
+    pub request: BufferedRequest,
     /// Final delivery failure.
     pub reason: String,
     /// Failure instant.

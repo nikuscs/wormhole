@@ -198,7 +198,17 @@
         ],
         "responses": {
           "200": {
-            "description": "Captures"
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/CapturedRequest"
+                  }
+                }
+              }
+            }
           }
         }
       },
@@ -239,8 +249,18 @@
           }
         ],
         "responses": {
-          "501": {
-            "description": "Stage 07"
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CapturedRequest"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": ""
           }
         }
       }
@@ -263,8 +283,21 @@
           }
         ],
         "responses": {
-          "501": {
-            "description": "Stage 07"
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReplayResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": ""
+          },
+          "404": {
+            "description": ""
           }
         }
       }
@@ -429,6 +462,56 @@
         }
       }
     },
+    "/v1/share": {
+      "post": {
+        "tags": [
+          "crate::share_api"
+        ],
+        "operationId": "share",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ShareRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ShareResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/shutdown": {
       "post": {
         "tags": [],
@@ -482,6 +565,24 @@
           "since"
         ],
         "properties": {
+          "buffered_delivered": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Number of buffered webhooks delivered in this daemon lifetime.",
+            "minimum": 0
+          },
+          "buffered_failed": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Number quarantined at the relay when last reported.",
+            "minimum": 0
+          },
+          "buffered_pending": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Number waiting at the relay when last reported.",
+            "minimum": 0
+          },
           "driver": {
             "type": "string",
             "description": "Driver registry name."
@@ -565,6 +666,108 @@
             "format": "int64",
             "description": "Maximum retention time in seconds.",
             "minimum": 0
+          }
+        }
+      },
+      "CapturedHeader": {
+        "type": "object",
+        "description": "One redacted captured HTTP header.",
+        "required": [
+          "name",
+          "value_b64"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "value_b64": {
+            "type": "string"
+          }
+        }
+      },
+      "CapturedRequest": {
+        "type": "object",
+        "description": "Memory-only captured HTTP exchange.",
+        "required": [
+          "id",
+          "bind_id",
+          "method",
+          "uri",
+          "headers",
+          "body",
+          "body_truncated",
+          "response_headers",
+          "response_body_prefix",
+          "response_body_truncated",
+          "duration_ms",
+          "delivery",
+          "captured_at"
+        ],
+        "properties": {
+          "bind_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "body": {
+            "type": "string"
+          },
+          "body_truncated": {
+            "type": "boolean"
+          },
+          "captured_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "delivery": {
+            "type": "string"
+          },
+          "duration_ms": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "endpoint_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "headers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CapturedHeader"
+            }
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "method": {
+            "type": "string"
+          },
+          "response_body_prefix": {
+            "type": "string"
+          },
+          "response_body_truncated": {
+            "type": "boolean"
+          },
+          "response_headers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CapturedHeader"
+            }
+          },
+          "response_status": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "minimum": 0
+          },
+          "uri": {
+            "type": "string"
           }
         }
       },
@@ -703,6 +906,12 @@
               }
             ]
           },
+          "capture_body_max": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Maximum complete request body retained for inspection.",
+            "minimum": 0
+          },
           "domain": {
             "type": [
               "string",
@@ -724,6 +933,10 @@
           "inspect": {
             "type": "boolean",
             "description": "Capture requests for inspection."
+          },
+          "inspect_assets": {
+            "type": "boolean",
+            "description": "Include static asset requests in inspection capture."
           },
           "persist": {
             "$ref": "#/components/schemas/Persistence",
@@ -960,12 +1173,35 @@
             "type": "string",
             "description": "TLS and handshake-bound server name."
           },
+          "transport": {
+            "$ref": "#/components/schemas/Transport",
+            "description": "Preferred control transport."
+          },
           "trusted_ca": {
             "type": [
               "string",
               "null"
             ],
             "description": "Optional exclusive development CA root."
+          }
+        }
+      },
+      "ReplayResponse": {
+        "type": "object",
+        "required": [
+          "status",
+          "duration_ms"
+        ],
+        "properties": {
+          "duration_ms": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "status": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
           }
         }
       },
@@ -980,13 +1216,32 @@
           "initial_delay_ms": {
             "type": "integer",
             "format": "int64",
-            "description": "Initial delay in milliseconds.",
             "minimum": 0
           },
           "max_attempts": {
             "type": "integer",
             "format": "int32",
-            "description": "Maximum delivery attempts.",
+            "minimum": 0
+          },
+          "max_body_bytes": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "max_delay_ms": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "retry_5xx": {
+            "type": "boolean"
+          },
+          "retry_connect": {
+            "type": "boolean"
+          },
+          "total_deadline_ms": {
+            "type": "integer",
+            "format": "int64",
             "minimum": 0
           }
         }
@@ -1044,6 +1299,41 @@
           }
         }
       },
+      "ShareRequest": {
+        "type": "object",
+        "required": [
+          "target",
+          "expires",
+          "path"
+        ],
+        "properties": {
+          "expires": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          },
+          "target": {
+            "type": "string"
+          }
+        }
+      },
+      "ShareResponse": {
+        "type": "object",
+        "required": [
+          "url",
+          "expires_unix"
+        ],
+        "properties": {
+          "expires_unix": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "url": {
+            "type": "string"
+          }
+        }
+      },
       "StatusResponse": {
         "type": "object",
         "required": [
@@ -1089,6 +1379,14 @@
           }
         ],
         "description": "Schema-only representation of the tagged target wire contract."
+      },
+      "Transport": {
+        "type": "string",
+        "enum": [
+          "auto",
+          "quic",
+          "ws"
+        ]
       }
     },
     "securitySchemes": {

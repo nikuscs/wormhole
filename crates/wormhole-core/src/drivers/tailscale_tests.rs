@@ -62,6 +62,8 @@ fn spec(qualifier: Option<&str>) -> EndpointSpec {
         auth: None,
         retry: None,
         inspect: false,
+        inspect_assets: false,
+        capture_body_max: 1024 * 1024,
         reservation: None,
     }
 }

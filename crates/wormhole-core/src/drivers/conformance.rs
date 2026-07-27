@@ -101,6 +101,8 @@ async fn fixture_driver_obeys_lifecycle_contract() {
             auth: None,
             retry: None,
             inspect: false,
+            inspect_assets: false,
+            capture_body_max: 1024 * 1024,
             reservation: None,
         },
         || async { true },

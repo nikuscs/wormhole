@@ -128,6 +128,13 @@ impl<S: AsyncRead + AsyncWrite + Unpin> SessionActor<S> {
                                 );
                             }
                         }
+                        Some(SessionCommand::BufferedStatus { bind, pending, failed }) => {
+                            self.channel.send(&ControlFrame::BufferedStatus {
+                                bind,
+                                pending,
+                                failed,
+                            }).await?;
+                        }
                         Some(SessionCommand::RemoveBind { bind }) => {
                             self.release_deleted_bind(bind);
                         }
@@ -153,11 +160,26 @@ impl<S: AsyncRead + AsyncWrite + Unpin> SessionActor<S> {
             ControlFrame::BindReady { bind } => {
                 self.state.registry.activate(bind, &self.session_tx)?;
                 self.channel.send(&ControlFrame::BindActive { bind }).await?;
+                if let Some(handle) = self.state.registry.get_bind(bind) {
+                    crate::buffer::spawn_drain(Arc::clone(&self.state), handle);
+                }
                 Ok(())
             }
             ControlFrame::Unbind { bind, forget } => self.handle_unbind(bind, forget).await,
             ControlFrame::ForgetReservation { reservation } => {
                 self.handle_forget_reservation(reservation).await
+            }
+            ControlFrame::AckBuffered { bind, seq } => {
+                self.validate_buffered_result(bind, seq)?;
+                self.state.database.delete_buffered(bind, seq)?;
+                self.continue_buffered_drain(bind);
+                Ok(())
+            }
+            ControlFrame::NackBuffered { bind, seq, reason } => {
+                self.validate_buffered_result(bind, seq)?;
+                self.state.database.fail_buffered(bind, seq, &reason)?;
+                self.continue_buffered_drain(bind);
+                Ok(())
             }
             ControlFrame::Ping { seq } => {
                 self.channel.send(&ControlFrame::Pong { seq }).await?;
@@ -213,6 +235,8 @@ impl<S: AsyncRead + AsyncWrite + Unpin> SessionActor<S> {
             return Err(error);
         }
         self.binds.insert(allocation.bind, allocation.persist);
+        let (pending_buffered, failed_buffered) =
+            self.state.database.buffered_counts(allocation.bind)?;
         self.channel
             .send(&ControlFrame::Bound {
                 request: request_id,
@@ -220,8 +244,8 @@ impl<S: AsyncRead + AsyncWrite + Unpin> SessionActor<S> {
                 urls: allocation.urls,
                 persist: allocation.persist,
                 reservation: allocation.reservation,
-                pending_buffered: 0,
-                failed_buffered: 0,
+                pending_buffered,
+                failed_buffered,
             })
             .await?;
         Ok(())
@@ -267,8 +291,24 @@ impl<S: AsyncRead + AsyncWrite + Unpin> SessionActor<S> {
         Ok(())
     }
 
+    fn validate_buffered_result(&self, bind: Uuid, seq: u64) -> Result<(), SessionError> {
+        if !self.binds.contains_key(&bind) || !self.state.complete_buffered(bind, seq) {
+            return Err(SessionError::Protocol(format!(
+                "buffered result is not in flight for this session: {bind}/{seq}"
+            )));
+        }
+        Ok(())
+    }
+
+    fn continue_buffered_drain(&self, bind: Uuid) {
+        if let Some(handle) = self.state.registry.get_bind(bind) {
+            crate::buffer::spawn_drain(Arc::clone(&self.state), handle);
+        }
+    }
+
     async fn handle_unbind(&mut self, bind: Uuid, forget: bool) -> Result<(), SessionError> {
         let persist = self.binds.remove(&bind).ok_or(RegistryError::UnknownBind(bind))?;
+        self.state.release_buffered_bind(bind);
         let tcp_port = self.tcp_port(bind);
         match (persist, forget) {
             (Persistence::Persistent, false) => self.state.registry.disconnect(bind)?,
@@ -277,7 +317,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> SessionActor<S> {
                     self.state.tcp_edges.remove_listener(port);
                 }
                 self.state.registry.remove(bind, true)?;
-                self.state.database.delete_bind(bind)?;
+                self.state.database.delete_bind_data(bind)?;
                 self.state.remove_bind(&self.fingerprint);
             }
             (Persistence::Temporary, _) => {
@@ -303,8 +343,9 @@ impl<S: AsyncRead + AsyncWrite + Unpin> SessionActor<S> {
                 self.state.tcp_edges.remove_listener(port);
             }
             self.binds.remove(&bind);
+            self.state.release_buffered_bind(bind);
             self.state.registry.remove(bind, true)?;
-            self.state.database.delete_bind(bind)?;
+            self.state.database.delete_bind_data(bind)?;
             self.state.remove_bind(&self.fingerprint);
         }
         self.channel.send(&ControlFrame::ForgotReservation { reservation }).await?;
@@ -319,6 +360,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> SessionActor<S> {
     }
 
     fn release_deleted_bind(&mut self, bind: Uuid) {
+        self.state.release_buffered_bind(bind);
         if self.binds.remove(&bind).is_none() {
             return;
         }
@@ -328,6 +370,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> SessionActor<S> {
     fn cleanup(&mut self) {
         let binds = self.binds.drain().collect::<Vec<_>>();
         for (bind, persist) in binds {
+            self.state.release_buffered_bind(bind);
             match persist {
                 Persistence::Persistent => {
                     let _ignored = self.state.registry.disconnect(bind);

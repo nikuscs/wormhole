@@ -66,6 +66,41 @@ jobs:
           key: test-${{ matrix.os }}
       - run: cargo test --workspace --locked
 
+  e2e:
+    name: End-to-end
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install Linux build dependencies
+        run: sudo apt-get update && sudo apt-get install -y clang libc6-dev
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: e2e
+      - run: make e2e
+
+  audit:
+    name: Vulnerability audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo install cargo-audit --locked
+      - run: cargo audit
+
+  coverage:
+    name: Coverage
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
+      - uses: taiki-e/install-action@cargo-llvm-cov
+      - run: cargo llvm-cov -p wormhole-proto --fail-under-lines 75
+      - run: cargo llvm-cov -p wormhole-core --fail-under-lines 75
+      - run: cargo llvm-cov --workspace --html
+
   deny:
     name: Dependency policy
     runs-on: ubuntu-latest

@@ -33,17 +33,32 @@ pub fn restore_reservations(endpoints: &mut [EndpointSpec], cached: &[EndpointSp
         .cloned()
         .collect::<Vec<_>>();
     for endpoint in endpoints {
-        let mut comparable = endpoint.clone();
-        comparable.reservation = None;
-        if let Some(index) = cached.iter().position(|candidate| {
-            let mut candidate = candidate.clone();
-            candidate.reservation = None;
-            candidate == comparable
-        }) {
-            endpoint.reservation = cached.remove(index).reservation;
+        let index = cached.iter().position(|candidate| equivalent_for_restore(endpoint, candidate));
+        if let Some(index) = index {
+            let candidate = cached.remove(index);
+            endpoint.reservation = candidate.reservation;
+            if let (Some(auth), Some(cached_auth)) = (&mut endpoint.auth, candidate.auth)
+                && auth.link_key.is_some()
+            {
+                auth.link_key = cached_auth.link_key;
+            }
         }
     }
     cached.is_empty()
+}
+
+fn equivalent_for_restore(endpoint: &EndpointSpec, candidate: &EndpointSpec) -> bool {
+    let mut endpoint = endpoint.clone();
+    let mut candidate = candidate.clone();
+    endpoint.reservation = None;
+    candidate.reservation = None;
+    if let (Some(auth), Some(cached_auth)) = (&mut endpoint.auth, &candidate.auth)
+        && auth.link_key.is_some()
+        && cached_auth.link_key.is_some()
+    {
+        auth.link_key.clone_from(&cached_auth.link_key);
+    }
+    endpoint == candidate
 }
 
 pub async fn expose_desired(

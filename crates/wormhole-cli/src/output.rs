@@ -36,6 +36,53 @@ pub trait HumanRender {
     }
 }
 
+impl HumanRender for wormhole_core::CapturedRequest {
+    fn render(&self) -> String {
+        format!(
+            "{} {} {}\nstatus={} duration={}ms delivery={} request_bytes={} response_bytes={}",
+            self.id,
+            self.method,
+            self.uri,
+            self.response_status.map_or_else(|| "-".to_owned(), |status| status.to_string()),
+            self.duration_ms,
+            self.delivery,
+            self.body.len(),
+            self.response_body_prefix.len()
+        )
+    }
+}
+
+impl HumanRender for Vec<wormhole_core::CapturedRequest> {
+    fn render(&self) -> String {
+        self.iter()
+            .map(|capture| {
+                format!(
+                    "{}\t{}\t{}\t{}",
+                    capture.id,
+                    capture.method,
+                    capture.uri,
+                    capture
+                        .response_status
+                        .map_or_else(|| "-".to_owned(), |status| status.to_string())
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+}
+
+impl HumanRender for crate::future_api::ReplayResponse {
+    fn render(&self) -> String {
+        format!("status={} duration={}ms", self.status, self.duration_ms)
+    }
+}
+
+impl HumanRender for crate::share_api::ShareResponse {
+    fn render(&self) -> String {
+        self.url.clone()
+    }
+}
+
 impl HumanRender for crate::local_api::StatusResponse {
     fn render(&self) -> String {
         format!(
@@ -190,7 +237,20 @@ fn endpoint_line(endpoint: &wormhole_core::ActiveEndpoint, styled: bool) -> Stri
     } else {
         endpoint.urls.join(",")
     };
-    format!("{glyph} {}\t{status}\t{urls}", endpoint.service)
+    let buffered = if endpoint.buffered_pending > 0 {
+        format!(
+            "\n  replaying {} buffered webhooks… delivered={} failed={}",
+            endpoint.buffered_pending, endpoint.buffered_delivered, endpoint.buffered_failed
+        )
+    } else if endpoint.buffered_failed > 0 || endpoint.buffered_delivered > 0 {
+        format!(
+            "\tbuffered: delivered={} failed={}",
+            endpoint.buffered_delivered, endpoint.buffered_failed
+        )
+    } else {
+        String::new()
+    };
+    format!("{glyph} {}\t{status}\t{urls}{buffered}", endpoint.service)
 }
 
 fn styles_enabled_stdout() -> bool {

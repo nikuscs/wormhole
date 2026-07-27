@@ -40,9 +40,10 @@ pub enum Command {
     Ls(ListArgs),
     /// Show daemon status.
     Status,
-    /// Inspect captured HTTP requests.
-    #[command(alias = "requests")]
-    Inspect(InspectArgs),
+    /// Inspect one captured HTTP request.
+    Inspect { request_id: String },
+    /// List or manage captured HTTP requests.
+    Requests(RequestsArgs),
     /// Replay one captured request.
     Replay { request_id: String },
     /// List discovered interface aliases.
@@ -92,9 +93,8 @@ pub struct TunnelOptions {
     /// Keep the endpoint and reclaim its reservation after restarts.
     #[arg(long)]
     pub persist: bool,
-    /// Disable request inspection.
-    #[arg(long)]
-    pub no_inspect: bool,
+    #[command(flatten)]
+    pub capture: CaptureOptions,
     /// Buffer up to this many offline requests.
     #[arg(long, value_name = "COUNT")]
     pub buffer: Option<u32>,
@@ -102,8 +102,8 @@ pub struct TunnelOptions {
     #[arg(long, value_name = "SPEC")]
     pub retry: Option<String>,
     /// Configure relay-edge authentication.
-    #[arg(long, value_name = "POLICY", env = "WORMHOLE_AUTH", conflicts_with = "auth_file")]
-    pub auth: Option<String>,
+    #[arg(long, value_name = "POLICY", env = "WORMHOLE_AUTH", action = clap::ArgAction::Append, conflicts_with = "auth_file")]
+    pub auth: Vec<String>,
     /// Read relay-edge authentication from a file.
     #[arg(long, value_name = "PATH", conflicts_with = "auth")]
     pub auth_file: Option<PathBuf>,
@@ -116,6 +116,25 @@ pub struct TunnelOptions {
     /// Stable service name.
     #[arg(long)]
     pub name: Option<String>,
+}
+
+#[derive(Debug, Args)]
+pub struct CaptureOptions {
+    /// Disable request inspection.
+    #[arg(long)]
+    pub no_inspect: bool,
+    /// Include static assets in request inspection.
+    #[arg(long, requires = "endpoint")]
+    pub include_assets: bool,
+    /// Maximum complete request body retained for inspection.
+    #[arg(long, default_value_t = 1024 * 1024)]
+    pub capture_body_max: u64,
+}
+
+impl Default for CaptureOptions {
+    fn default() -> Self {
+        Self { no_inspect: false, include_assets: false, capture_body_max: 1024 * 1024 }
+    }
 }
 
 #[derive(Debug, Args)]
@@ -153,13 +172,21 @@ pub struct ListArgs {
 }
 
 #[derive(Debug, Args)]
-pub struct InspectArgs {
+pub struct RequestsArgs {
     /// Restrict captures to one endpoint.
     #[arg(long)]
     pub endpoint: Option<String>,
     /// Follow newly captured requests.
     #[arg(long)]
     pub follow: bool,
+    #[command(subcommand)]
+    pub command: Option<RequestCommand>,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum RequestCommand {
+    /// Delete all in-memory request captures.
+    Clear,
 }
 
 #[derive(Debug, Subcommand)]
@@ -223,6 +250,9 @@ pub struct ShareArgs {
     /// Share-link lifetime.
     #[arg(long, default_value = "24h")]
     pub expires: String,
+    /// Landing path for the host-wide grant.
+    #[arg(long, default_value = "/")]
+    pub path: String,
 }
 
 #[cfg(test)]

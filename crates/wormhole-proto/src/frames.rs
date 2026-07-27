@@ -51,6 +51,8 @@ pub enum ControlFrame {
     BindError { request: Uuid, reason: String },
     /// Confirms the bind is online and may receive streams.
     BindActive { bind: Uuid },
+    /// Reports updated durable webhook queue counts.
+    BufferedStatus { bind: Uuid, pending: u32, failed: u32 },
     /// Carries an informational session event.
     Event { kind: EventKind, msg: String },
     /// Acknowledges complete delivery of a buffered webhook.

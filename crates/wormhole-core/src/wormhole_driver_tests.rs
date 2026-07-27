@@ -23,7 +23,7 @@ use uuid::Uuid;
 use wormhole_proto::{
     ALPN, HandshakeStep, KeyDecision, ServerHandshake,
     codec::{ControlChannel, write_stream_header},
-    frames::{BindSpec, ControlFrame, Limits, Persistence, StreamHeader},
+    frames::{BindSpec, BufferPolicy, ControlFrame, Limits, Persistence, StreamHeader},
 };
 
 use super::WormholeDriver;
@@ -33,6 +33,17 @@ use crate::{
     model::{EndpointSpec, ResolvedTarget, ServiceProto},
     remotes::Remote,
 };
+
+#[test]
+fn tcp_buffering_is_rejected_before_wire_translation() {
+    let directory = tempdir().expect("temporary directory");
+    let home = Utf8PathBuf::from_path_buf(directory.path().to_owned()).expect("UTF-8 home");
+    let driver =
+        WormholeDriver::new(BTreeMap::new(), None, Arc::new(IdentityStore::with_home(home)));
+    let mut endpoint = spec(11_001);
+    endpoint.buffer = Some(BufferPolicy { max_requests: 1, max_body_bytes: 1024, ttl_secs: 60 });
+    assert!(driver.validate(&endpoint).is_err());
+}
 
 #[tokio::test]
 async fn two_binds_share_connection_and_route_to_distinct_targets() {
@@ -123,6 +134,8 @@ fn spec(marker: u16) -> EndpointSpec {
         auth: None,
         retry: None,
         inspect: false,
+        inspect_assets: false,
+        capture_body_max: 1024 * 1024,
         reservation: None,
     }
 }

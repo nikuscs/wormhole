@@ -116,6 +116,51 @@ impl DaemonClient {
         self.json(Method::POST, "/v1/reload", Option::<&()>::None).await
     }
 
+    pub async fn captures(
+        &self,
+        endpoint: Option<&str>,
+        since: Option<jiff::Timestamp>,
+    ) -> Result<Vec<wormhole_core::CapturedRequest>, ClientError> {
+        let mut query = Vec::new();
+        if let Some(endpoint) = endpoint {
+            query.push(format!("endpoint={endpoint}"));
+        }
+        if let Some(since) = since {
+            query.push(format!("since={since}"));
+        }
+        let path = if query.is_empty() {
+            "/v1/requests".to_owned()
+        } else {
+            format!("/v1/requests?{}", query.join("&"))
+        };
+        self.json(Method::GET, &path, Option::<&()>::None).await
+    }
+
+    pub async fn capture(
+        &self,
+        id: uuid::Uuid,
+    ) -> Result<wormhole_core::CapturedRequest, ClientError> {
+        self.json(Method::GET, &format!("/v1/requests/{id}"), Option::<&()>::None).await
+    }
+
+    pub async fn replay(
+        &self,
+        id: uuid::Uuid,
+    ) -> Result<crate::future_api::ReplayResponse, ClientError> {
+        self.json(Method::POST, &format!("/v1/requests/{id}/replay"), Option::<&()>::None).await
+    }
+
+    pub async fn clear_captures(&self) -> Result<ClosedResponse, ClientError> {
+        self.json(Method::DELETE, "/v1/requests", Option::<&()>::None).await
+    }
+
+    pub async fn share(
+        &self,
+        request: &crate::share_api::ShareRequest,
+    ) -> Result<crate::share_api::ShareResponse, ClientError> {
+        self.json(Method::POST, "/v1/share", Some(request)).await
+    }
+
     async fn connect(paths: &RuntimePaths) -> Result<(), std::io::Error> {
         UnixStream::connect(&paths.socket).await.map(|_| ())
     }

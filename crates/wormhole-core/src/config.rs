@@ -5,7 +5,7 @@ use std::{collections::BTreeMap, env, fs};
 use camino::{Utf8Path, Utf8PathBuf};
 use serde::{Deserialize, Serialize};
 
-use crate::{error::ConfigError, remotes::Remote};
+use crate::{error::ConfigError, model::RetryPolicy, remotes::Remote};
 
 /// Effective client configuration after layer merging.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -30,6 +30,8 @@ pub struct ClientDefaults {
     pub drivers: Vec<String>,
     /// Whether request inspection defaults on.
     pub inspect: bool,
+    /// Default local HTTP delivery retry policy.
+    pub retry: Option<RetryPolicy>,
     /// Unknown forward-compatible settings.
     #[serde(default, flatten)]
     extra: BTreeMap<String, toml::Value>,
@@ -37,7 +39,12 @@ pub struct ClientDefaults {
 
 impl Default for ClientDefaults {
     fn default() -> Self {
-        Self { drivers: vec!["wormhole".to_owned()], inspect: false, extra: BTreeMap::new() }
+        Self {
+            drivers: vec!["wormhole".to_owned()],
+            inspect: false,
+            retry: None,
+            extra: BTreeMap::new(),
+        }
     }
 }
 
@@ -66,9 +73,72 @@ pub struct DefaultsLayer {
     pub drivers: Option<Vec<String>>,
     /// Optional inspection default replacement.
     pub inspect: Option<bool>,
+    /// Optional delivery retry default replacement.
+    #[serde(default, deserialize_with = "deserialize_retry_policy")]
+    pub retry: Option<RetryPolicy>,
     /// Unknown forward-compatible settings.
     #[serde(default, flatten)]
     extra: BTreeMap<String, toml::Value>,
+}
+
+#[derive(Deserialize)]
+struct RetryConfig {
+    attempts: u32,
+    backoff: String,
+    max_backoff: Option<String>,
+    #[serde(default)]
+    on: Vec<String>,
+    max_body: Option<String>,
+    total_deadline: Option<String>,
+}
+
+fn deserialize_retry_policy<'de, D>(deserializer: D) -> Result<Option<RetryPolicy>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let Some(config) = Option::<RetryConfig>::deserialize(deserializer)? else {
+        return Ok(None);
+    };
+    let duration = |value: &str| {
+        humantime::parse_duration(value)
+            .map_err(serde::de::Error::custom)?
+            .as_millis()
+            .try_into()
+            .map_err(serde::de::Error::custom)
+    };
+    Ok(Some(RetryPolicy {
+        max_attempts: config.attempts,
+        initial_delay_ms: duration(&config.backoff)?,
+        max_delay_ms: config.max_backoff.as_deref().map(duration).transpose()?.unwrap_or(30_000),
+        retry_connect: config.on.is_empty() || config.on.iter().any(|item| item == "connect-error"),
+        retry_5xx: config.on.iter().any(|item| item == "5xx"),
+        max_body_bytes: config
+            .max_body
+            .as_deref()
+            .map(parse_retry_bytes)
+            .transpose()
+            .map_err(serde::de::Error::custom)?
+            .unwrap_or(1024 * 1024),
+        total_deadline_ms: config
+            .total_deadline
+            .as_deref()
+            .map(duration)
+            .transpose()?
+            .unwrap_or(60_000),
+    }))
+}
+
+fn parse_retry_bytes(value: &str) -> Result<u64, String> {
+    let split = value.find(|character: char| !character.is_ascii_digit()).unwrap_or(value.len());
+    let number = value[..split].parse::<u64>().map_err(|error| error.to_string())?;
+    let multiplier = match value[split..].trim().to_ascii_lowercase().as_str() {
+        "" | "b" => 1,
+        "kib" => 1024,
+        "mib" => 1024 * 1024,
+        "gib" => 1024 * 1024 * 1024,
+        unit => return Err(format!("unsupported retry body unit: {unit}")),
+    };
+    number.checked_mul(multiplier).ok_or_else(|| "retry body size overflow".to_owned())
 }
 
 impl ClientConfig {
@@ -167,6 +237,9 @@ fn merge(config: &mut ClientConfig, layer: ConfigLayer) {
         }
         if let Some(inspect) = defaults.inspect {
             config.defaults.inspect = inspect;
+        }
+        if defaults.retry.is_some() {
+            config.defaults.retry = defaults.retry;
         }
     }
     config.extra.extend(layer.extra);

@@ -7,6 +7,8 @@ use tempfile::tempdir;
 use uuid::Uuid;
 use wormhole_proto::frames::{BufferPolicy, Persistence};
 
+use crate::buffer::BufferedRequest;
+
 use super::{
     AuthorizedKey, CURRENT_SCHEMA, DbError, FailedWebhook, PersistedBind, PersistedBindSpec,
     PersistedEndpoint, RelayDb, initialize_schema, retain_latest_backups,
@@ -48,7 +50,16 @@ fn typed_crud_round_trips_all_tables() {
         revoked: false,
     };
     let failed = FailedWebhook {
-        request: b"request".to_vec(),
+        request: BufferedRequest {
+            v: 1,
+            method: "POST".to_owned(),
+            uri: "/hook".to_owned(),
+            http_version: "HTTP/1.1".to_owned(),
+            headers: Vec::new(),
+            body: b"request".to_vec(),
+            seq: 1,
+            received_at: Timestamp::now(),
+        },
         reason: "offline".to_owned(),
         failed_at: Timestamp::now(),
     };

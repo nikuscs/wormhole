@@ -26,6 +26,7 @@ futures.workspace = true
 governor.workspace = true
 http.workspace = true
 http-body-util.workspace = true
+hmac.workspace = true
 hyper.workspace = true
 hyper-util.workspace = true
 instant-acme.workspace = true
@@ -56,5 +57,6 @@ x509-parser.workspace = true
 
 [dev-dependencies]
 assert_cmd.workspace = true
+proptest.workspace = true
 predicates.workspace = true
 tempfile.workspace = true

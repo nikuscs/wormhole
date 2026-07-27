@@ -5,9 +5,10 @@ use std::sync::{
     atomic::{AtomicU32, AtomicU64, Ordering},
 };
 
-use dashmap::DashMap;
+use dashmap::{DashMap, mapref::entry::Entry};
 use jiff::Timestamp;
 use tokio::sync::watch;
+use uuid::Uuid;
 
 use crate::{
     authz::AuthStore,
@@ -33,6 +34,7 @@ pub struct AppState {
     pub started_at: Timestamp,
     counters: DashMap<String, Arc<KeyCounters>>,
     active_streams: AtomicU64,
+    buffered_inflight: DashMap<Uuid, u64>,
     shutdown_tx: watch::Sender<bool>,
 }
 
@@ -55,6 +57,7 @@ impl AppState {
             started_at: Timestamp::now(),
             counters: DashMap::new(),
             active_streams: AtomicU64::new(0),
+            buffered_inflight: DashMap::new(),
             shutdown_tx,
         };
         for (_, bind) in state.database.list_binds()? {
@@ -81,6 +84,27 @@ impl AppState {
     /// Releases one bind slot.
     pub fn remove_bind(&self, fingerprint: &str) {
         decrement(&self.counters(fingerprint).binds);
+    }
+
+    /// Claims one buffered row for delivery on its owning session.
+    pub(crate) fn claim_buffered(&self, bind: Uuid, seq: u64) -> bool {
+        match self.buffered_inflight.entry(bind) {
+            Entry::Vacant(entry) => {
+                entry.insert(seq);
+                true
+            }
+            Entry::Occupied(_) => false,
+        }
+    }
+
+    /// Completes a previously claimed buffered delivery.
+    pub(crate) fn complete_buffered(&self, bind: Uuid, seq: u64) -> bool {
+        self.buffered_inflight.remove_if(&bind, |_, current| *current == seq).is_some()
+    }
+
+    /// Releases the buffered claim when a bind disconnects.
+    pub(crate) fn release_buffered_bind(&self, bind: Uuid) {
+        self.buffered_inflight.remove(&bind);
     }
 
     /// Subscribes a session actor to reliable process shutdown notification.

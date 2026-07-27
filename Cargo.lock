@@ -1095,6 +1095,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2304e00983f87ffb38b55b444b5e3b60a884b5d30c0fca7d82fe33449bbe55ea"
 
 [[package]]
+name = "hmac"
+version = "0.12.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6c49c37c09c17a53d937dfbb742eb3a961d65a994e6bcdcf37e7399d0cc8ab5e"
+dependencies = [
+ "digest 0.10.7",
+]
+
+[[package]]
 name = "http"
 version = "1.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3894,6 +3903,7 @@ dependencies = [
  "assert_cmd",
  "async-trait",
  "axum",
+ "base64 0.23.0",
  "bytes",
  "camino",
  "clap",
@@ -3941,8 +3951,10 @@ dependencies = [
  "dashmap",
  "directories",
  "futures",
+ "hmac",
  "http",
  "http-body-util",
+ "humantime",
  "hyper",
  "hyper-util",
  "if-addrs",
@@ -3976,6 +3988,12 @@ dependencies = [
 [[package]]
 name = "wormhole-e2e"
 version = "0.0.0"
+dependencies = [
+ "camino",
+ "serde_json",
+ "tempfile",
+ "tokio",
+]
 
 [[package]]
 name = "wormhole-proto"
@@ -4016,6 +4034,7 @@ dependencies = [
  "dashmap",
  "futures",
  "governor",
+ "hmac",
  "http",
  "http-body-util",
  "hyper",
@@ -4025,6 +4044,7 @@ dependencies = [
  "nix",
  "parking_lot",
  "predicates",
+ "proptest",
  "quinn",
  "rand 0.10.2",
  "rcgen",

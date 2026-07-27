@@ -28,7 +28,9 @@ fn assert_help_recursive(mut command: clap::Command) {
 #[test]
 fn stage_seven_commands_return_dedicated_variants() {
     for args in [
-        ["wormhole", "inspect"].as_slice(),
+        ["wormhole", "inspect", "request-id"].as_slice(),
+        ["wormhole", "requests", "--follow"].as_slice(),
+        ["wormhole", "requests", "clear"].as_slice(),
         ["wormhole", "replay", "request-id"].as_slice(),
         ["wormhole", "share", "service"].as_slice(),
     ] {

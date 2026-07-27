@@ -32,6 +32,8 @@ fn desired_services_round_trip() {
             auth: None,
             retry: None,
             inspect: false,
+            inspect_assets: false,
+            capture_body_max: 1024 * 1024,
             reservation: None,
         }],
         disabled_endpoints: Vec::new(),

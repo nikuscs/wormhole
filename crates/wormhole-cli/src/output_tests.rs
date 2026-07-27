@@ -29,6 +29,9 @@ fn forced_tty_endpoint_output_is_stable() {
         driver: "wormhole".to_owned(),
         urls: vec!["https://web.example.com".to_owned()],
         status: wormhole_core::model::EndpointStatus::Online,
+        buffered_delivered: 0,
+        buffered_pending: 0,
+        buffered_failed: 0,
         since: "2026-01-01T00:00:00Z".parse().expect("timestamp"),
     }];
 

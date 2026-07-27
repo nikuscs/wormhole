@@ -43,15 +43,17 @@ _arguments "${_arguments_options[@]}" : \
 '*--endpoint=[Add a provider endpoint specification; repeat for multiple URLs]:DRIVER[:QUALIFIER]:_default' \
 '--host=[Request a server-owned subdomain label]:HOST:_default' \
 '--public-port=[Request a provider-side public TCP port]:PORT:_default' \
+'--capture-body-max=[Maximum complete request body retained for inspection]:CAPTURE_BODY_MAX:_default' \
 '--buffer=[Buffer up to this many offline requests]:COUNT:_default' \
 '--retry=[Configure local delivery retries]:SPEC:_default' \
-'(--auth-file)--auth=[Configure relay-edge authentication]:POLICY:_default' \
+'(--auth-file)*--auth=[Configure relay-edge authentication]:POLICY:_default' \
 '(--auth)--auth-file=[Read relay-edge authentication from a file]:PATH:_files' \
 '--remote=[Select a named Wormhole remote]:REMOTE:_default' \
 '--name=[Stable service name]:NAME:_default' \
 '--config=[Override the global configuration file]:PATH:_files' \
 '--persist[Keep the endpoint and reclaim its reservation after restarts]' \
 '--no-inspect[Disable request inspection]' \
+'--include-assets[Include static assets in request inspection]' \
 '--foreground[Run the tunnel manager in this process]' \
 '--json[Emit stable JSON instead of human-readable output]' \
 '(-v --verbose)-q[Suppress nonessential diagnostics]' \
@@ -70,15 +72,17 @@ _arguments "${_arguments_options[@]}" : \
 '*--endpoint=[Add a provider endpoint specification; repeat for multiple URLs]:DRIVER[:QUALIFIER]:_default' \
 '--host=[Request a server-owned subdomain label]:HOST:_default' \
 '--public-port=[Request a provider-side public TCP port]:PORT:_default' \
+'--capture-body-max=[Maximum complete request body retained for inspection]:CAPTURE_BODY_MAX:_default' \
 '--buffer=[Buffer up to this many offline requests]:COUNT:_default' \
 '--retry=[Configure local delivery retries]:SPEC:_default' \
-'(--auth-file)--auth=[Configure relay-edge authentication]:POLICY:_default' \
+'(--auth-file)*--auth=[Configure relay-edge authentication]:POLICY:_default' \
 '(--auth)--auth-file=[Read relay-edge authentication from a file]:PATH:_files' \
 '--remote=[Select a named Wormhole remote]:REMOTE:_default' \
 '--name=[Stable service name]:NAME:_default' \
 '--config=[Override the global configuration file]:PATH:_files' \
 '--persist[Keep the endpoint and reclaim its reservation after restarts]' \
 '--no-inspect[Disable request inspection]' \
+'--include-assets[Include static assets in request inspection]' \
 '--foreground[Run the tunnel manager in this process]' \
 '--json[Emit stable JSON instead of human-readable output]' \
 '(-v --verbose)-q[Suppress nonessential diagnostics]' \
@@ -98,15 +102,17 @@ _arguments "${_arguments_options[@]}" : \
 '*--endpoint=[Add a provider endpoint specification; repeat for multiple URLs]:DRIVER[:QUALIFIER]:_default' \
 '--host=[Request a server-owned subdomain label]:HOST:_default' \
 '--public-port=[Request a provider-side public TCP port]:PORT:_default' \
+'--capture-body-max=[Maximum complete request body retained for inspection]:CAPTURE_BODY_MAX:_default' \
 '--buffer=[Buffer up to this many offline requests]:COUNT:_default' \
 '--retry=[Configure local delivery retries]:SPEC:_default' \
-'(--auth-file)--auth=[Configure relay-edge authentication]:POLICY:_default' \
+'(--auth-file)*--auth=[Configure relay-edge authentication]:POLICY:_default' \
 '(--auth)--auth-file=[Read relay-edge authentication from a file]:PATH:_files' \
 '--remote=[Select a named Wormhole remote]:REMOTE:_default' \
 '--name=[Stable service name]:NAME:_default' \
 '--config=[Override the global configuration file]:PATH:_files' \
 '--persist[Keep the endpoint and reclaim its reservation after restarts]' \
 '--no-inspect[Disable request inspection]' \
+'--include-assets[Include static assets in request inspection]' \
 '--foreground[Run the tunnel manager in this process]' \
 '--json[Emit stable JSON instead of human-readable output]' \
 '(-v --verbose)-q[Suppress nonessential diagnostics]' \
@@ -182,6 +188,21 @@ _arguments "${_arguments_options[@]}" : \
 ;;
 (inspect)
 _arguments "${_arguments_options[@]}" : \
+'--config=[Override the global configuration file]:PATH:_files' \
+'--json[Emit stable JSON instead of human-readable output]' \
+'(-v --verbose)-q[Suppress nonessential diagnostics]' \
+'(-v --verbose)--quiet[Suppress nonessential diagnostics]' \
+'*-v[Increase diagnostic verbosity (repeat for trace logging)]' \
+'*--verbose[Increase diagnostic verbosity (repeat for trace logging)]' \
+'-h[Print help]' \
+'--help[Print help]' \
+'-V[Print version]' \
+'--version[Print version]' \
+':request_id:_default' \
+&& ret=0
+;;
+(requests)
+_arguments "${_arguments_options[@]}" : \
 '--endpoint=[Restrict captures to one endpoint]:ENDPOINT:_default' \
 '--config=[Override the global configuration file]:PATH:_files' \
 '--follow[Follow newly captured requests]' \
@@ -194,7 +215,57 @@ _arguments "${_arguments_options[@]}" : \
 '--help[Print help]' \
 '-V[Print version]' \
 '--version[Print version]' \
+":: :_wormhole__subcmd__requests_commands" \
+"*::: :->requests" \
 && ret=0
+
+    case $state in
+    (requests)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:wormhole-requests-command-$line[1]:"
+        case $line[1] in
+            (clear)
+_arguments "${_arguments_options[@]}" : \
+'--config=[Override the global configuration file]:PATH:_files' \
+'--json[Emit stable JSON instead of human-readable output]' \
+'(-v --verbose)-q[Suppress nonessential diagnostics]' \
+'(-v --verbose)--quiet[Suppress nonessential diagnostics]' \
+'*-v[Increase diagnostic verbosity (repeat for trace logging)]' \
+'*--verbose[Increase diagnostic verbosity (repeat for trace logging)]' \
+'-h[Print help]' \
+'--help[Print help]' \
+'-V[Print version]' \
+'--version[Print version]' \
+&& ret=0
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+":: :_wormhole__subcmd__requests__subcmd__help_commands" \
+"*::: :->help" \
+&& ret=0
+
+    case $state in
+    (help)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:wormhole-requests-help-command-$line[1]:"
+        case $line[1] in
+            (clear)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
+        esac
+    ;;
+esac
 ;;
 (replay)
 _arguments "${_arguments_options[@]}" : \
@@ -601,6 +672,7 @@ _arguments "${_arguments_options[@]}" : \
 (share)
 _arguments "${_arguments_options[@]}" : \
 '--expires=[Share-link lifetime]:EXPIRES:_default' \
+'--path=[Landing path for the host-wide grant]:PATH:_default' \
 '--config=[Override the global configuration file]:PATH:_files' \
 '--json[Emit stable JSON instead of human-readable output]' \
 '(-v --verbose)-q[Suppress nonessential diagnostics]' \
@@ -657,6 +729,26 @@ _arguments "${_arguments_options[@]}" : \
 (inspect)
 _arguments "${_arguments_options[@]}" : \
 && ret=0
+;;
+(requests)
+_arguments "${_arguments_options[@]}" : \
+":: :_wormhole__subcmd__help__subcmd__requests_commands" \
+"*::: :->requests" \
+&& ret=0
+
+    case $state in
+    (requests)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:wormhole-help-requests-command-$line[1]:"
+        case $line[1] in
+            (clear)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+        esac
+    ;;
+esac
 ;;
 (replay)
 _arguments "${_arguments_options[@]}" : \
@@ -793,7 +885,8 @@ _wormhole_commands() {
 'down:Stop project services or endpoint identifiers' \
 'ls:List active endpoints' \
 'status:Show daemon status' \
-'inspect:Inspect captured HTTP requests' \
+'inspect:Inspect one captured HTTP request' \
+'requests:List or manage captured HTTP requests' \
 'replay:Replay one captured request' \
 'interfaces:List discovered interface aliases' \
 'remote:Manage named Wormhole remotes' \
@@ -910,7 +1003,8 @@ _wormhole__subcmd__help_commands() {
 'down:Stop project services or endpoint identifiers' \
 'ls:List active endpoints' \
 'status:Show daemon status' \
-'inspect:Inspect captured HTTP requests' \
+'inspect:Inspect one captured HTTP request' \
+'requests:List or manage captured HTTP requests' \
 'replay:Replay one captured request' \
 'interfaces:List discovered interface aliases' \
 'remote:Manage named Wormhole remotes' \
@@ -1051,6 +1145,18 @@ _wormhole__subcmd__help__subcmd__remote__subcmd__test_commands() {
 _wormhole__subcmd__help__subcmd__replay_commands() {
     local commands; commands=()
     _describe -t commands 'wormhole help replay commands' commands "$@"
+}
+(( $+functions[_wormhole__subcmd__help__subcmd__requests_commands] )) ||
+_wormhole__subcmd__help__subcmd__requests_commands() {
+    local commands; commands=(
+'clear:Delete all in-memory request captures' \
+    )
+    _describe -t commands 'wormhole help requests commands' commands "$@"
+}
+(( $+functions[_wormhole__subcmd__help__subcmd__requests__subcmd__clear_commands] )) ||
+_wormhole__subcmd__help__subcmd__requests__subcmd__clear_commands() {
+    local commands; commands=()
+    _describe -t commands 'wormhole help requests clear commands' commands "$@"
 }
 (( $+functions[_wormhole__subcmd__help__subcmd__run_commands] )) ||
 _wormhole__subcmd__help__subcmd__run_commands() {
@@ -1211,6 +1317,37 @@ _wormhole__subcmd__remote__subcmd__test_commands() {
 _wormhole__subcmd__replay_commands() {
     local commands; commands=()
     _describe -t commands 'wormhole replay commands' commands "$@"
+}
+(( $+functions[_wormhole__subcmd__requests_commands] )) ||
+_wormhole__subcmd__requests_commands() {
+    local commands; commands=(
+'clear:Delete all in-memory request captures' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
+    _describe -t commands 'wormhole requests commands' commands "$@"
+}
+(( $+functions[_wormhole__subcmd__requests__subcmd__clear_commands] )) ||
+_wormhole__subcmd__requests__subcmd__clear_commands() {
+    local commands; commands=()
+    _describe -t commands 'wormhole requests clear commands' commands "$@"
+}
+(( $+functions[_wormhole__subcmd__requests__subcmd__help_commands] )) ||
+_wormhole__subcmd__requests__subcmd__help_commands() {
+    local commands; commands=(
+'clear:Delete all in-memory request captures' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
+    _describe -t commands 'wormhole requests help commands' commands "$@"
+}
+(( $+functions[_wormhole__subcmd__requests__subcmd__help__subcmd__clear_commands] )) ||
+_wormhole__subcmd__requests__subcmd__help__subcmd__clear_commands() {
+    local commands; commands=()
+    _describe -t commands 'wormhole requests help clear commands' commands "$@"
+}
+(( $+functions[_wormhole__subcmd__requests__subcmd__help__subcmd__help_commands] )) ||
+_wormhole__subcmd__requests__subcmd__help__subcmd__help_commands() {
+    local commands; commands=()
+    _describe -t commands 'wormhole requests help help commands' commands "$@"
 }
 (( $+functions[_wormhole__subcmd__run_commands] )) ||
 _wormhole__subcmd__run_commands() {

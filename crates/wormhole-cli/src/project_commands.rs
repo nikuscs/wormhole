@@ -17,10 +17,18 @@ pub async fn up(cli: &Cli, names: &[String]) -> Result<(), CliError> {
     let config = load_command_config(cli)?;
     let client = DaemonClient::ensure(cli.config.as_ref()).await?;
     let mut active = Vec::new();
-    for (mut service, mut endpoints) in project.selected(names, &directory)? {
+    for (mut service, mut endpoints) in
+        project.selected(names, &directory, config.defaults.inspect)?
+    {
         service.target = resolve_target(service.target, &config).await?;
         if endpoints.is_empty() {
             endpoints = build_specs(service.proto, &TunnelOptions::default(), &config).await?;
+        } else {
+            for endpoint in &mut endpoints {
+                if endpoint.retry.is_none() {
+                    endpoint.retry.clone_from(&config.defaults.retry);
+                }
+            }
         }
         active.extend(
             client
@@ -50,7 +58,7 @@ pub async fn down(cli: &Cli, targets: &[String], forget: bool) -> Result<(), Cli
         targets.to_vec()
     } else {
         project
-            .selected(targets, &directory)?
+            .selected(targets, &directory, false)?
             .into_iter()
             .map(|(service, _)| service.name)
             .collect::<Vec<_>>()

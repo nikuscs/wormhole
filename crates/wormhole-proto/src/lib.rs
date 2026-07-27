@@ -6,6 +6,7 @@ pub mod error;
 pub mod frames;
 pub mod handshake;
 pub mod keys;
+pub mod mux;
 
 pub use error::ProtoError;
 pub use frames::{ALPN, PROTO_VERSION};

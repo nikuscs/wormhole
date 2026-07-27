@@ -48,7 +48,7 @@ impl DriverCapabilities {
 
     /// Capabilities implemented by the Stage 04 Wormhole HTTP path.
     pub const fn wormhole_http() -> Self {
-        Self(Self::BUFFER | Self::AUTH | Self::INSPECT)
+        Self(Self::BUFFER | Self::AUTH | Self::RETRY | Self::INSPECT)
     }
 
     /// All optional capabilities, useful for provider implementations and tests.
@@ -91,6 +91,8 @@ pub enum DriverEvent {
     Closed,
     /// Captured HTTP request record.
     Captured(Box<CapturedRequest>),
+    /// Buffered webhook replay progress.
+    BufferedDelivery { pending: u32, failed: u32, delivered_delta: u64 },
 }
 
 /// Driver event tagged with its manager-local endpoint id.

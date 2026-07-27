@@ -93,6 +93,7 @@ impl DaemonServer {
             bindings,
             persistence_lock,
             expose_lock,
+            captures: Arc::new(RwLock::new(crate::capture_store::CaptureStore::default())),
             started: jiff::Timestamp::now(),
             shutdown: CancellationToken::new(),
             token: Arc::from(token),
@@ -174,6 +175,7 @@ async fn start_persistence(state: &ApiState) -> Result<(), DaemonError> {
     let database = Arc::clone(&state.database);
     let manager = Arc::clone(&state.manager);
     let persistence_lock = Arc::clone(&state.persistence_lock);
+    let captures = Arc::clone(&state.captures);
     tokio::spawn(async move {
         let mut failed = std::collections::HashSet::new();
         while let Some(event) = events.recv().await {
@@ -197,6 +199,9 @@ async fn start_persistence(state: &ApiState) -> Result<(), DaemonError> {
                 DriverEvent::Handoff(barrier) if !failed.contains(&event.endpoint) => {
                     manager.confirm_handoff(event.endpoint);
                     barrier.notify_one();
+                }
+                DriverEvent::Captured(capture) => {
+                    captures.write().await.insert(event.endpoint, *capture);
                 }
                 _ => {}
             }

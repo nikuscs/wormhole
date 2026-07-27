@@ -8,21 +8,34 @@ use redb::{Database, Durability, ReadableDatabase, ReadableTable, TableDefinitio
 use serde::{Serialize, de::DeserializeOwned};
 use uuid::Uuid;
 
+use crate::buffer::BufferedRequest;
+
 pub use crate::db_models::{
     AuthVerifier, AuthorizedKey, FailedWebhook, PersistedBind, PersistedBindSpec, PersistedEndpoint,
 };
 
 const CURRENT_SCHEMA: u64 = 1;
 const META: TableDefinition<&str, u64> = TableDefinition::new("meta");
-const BINDS: TableDefinition<&[u8], &[u8]> = TableDefinition::new("binds");
+pub(crate) const BINDS: TableDefinition<&[u8], &[u8]> = TableDefinition::new("binds");
 const KEYS: TableDefinition<&str, &[u8]> = TableDefinition::new("keys");
-const WEBHOOK_BUFFER: TableDefinition<&[u8], &[u8]> = TableDefinition::new("webhook_buffer");
-const WEBHOOK_FAILED: TableDefinition<&[u8], &[u8]> = TableDefinition::new("webhook_failed");
+pub(crate) const WEBHOOK_BUFFER: TableDefinition<&[u8], &[u8]> =
+    TableDefinition::new("webhook_buffer");
+pub(crate) const WEBHOOK_FAILED: TableDefinition<&[u8], &[u8]> =
+    TableDefinition::new("webhook_failed");
+pub(crate) const WEBHOOK_SEQUENCE: TableDefinition<&[u8], u64> =
+    TableDefinition::new("webhook_sequence");
 const SCHEMA_VERSION_KEY: &str = "schema_version";
 
 /// Typed handle to relay persistence.
+pub struct BufferQuotas {
+    pub max_requests: u32,
+    pub ttl_secs: u64,
+    pub key_bytes: u64,
+    pub total_bytes: u64,
+}
+
 pub struct RelayDb {
-    database: Database,
+    pub(crate) database: Database,
     path: Utf8PathBuf,
 }
 
@@ -160,6 +173,119 @@ impl RelayDb {
             .transpose()
     }
 
+    /// Atomically reserves quotas, assigns a sequence, and commits one webhook.
+    pub fn enqueue_buffered(
+        &self,
+        bind: Uuid,
+        key_fpr: &str,
+        mut request: BufferedRequest,
+        quotas: BufferQuotas,
+    ) -> Result<u64, DbError> {
+        self.prune_expired(bind, quotas.ttl_secs)?;
+        let mut transaction = self.database.begin_write().map_err(redb_error)?;
+        transaction.set_durability(Durability::Immediate).map_err(redb_error)?;
+        let owned_binds = {
+            let table = transaction.open_table(BINDS).map_err(redb_error)?;
+            let mut owned = std::collections::HashSet::new();
+            for entry in table.iter().map_err(redb_error)? {
+                let (stored_key, value) = entry.map_err(redb_error)?;
+                let record: PersistedBind = decode(value.value())?;
+                if record.key_fpr == key_fpr
+                    && let Ok(bytes) = <[u8; 16]>::try_from(stored_key.value())
+                {
+                    owned.insert(Uuid::from_bytes(bytes));
+                }
+            }
+            owned
+        };
+        let mut total_bytes = 0_u64;
+        let mut key_bytes = 0_u64;
+        let mut count = 0_u32;
+        {
+            let table = transaction.open_table(WEBHOOK_BUFFER).map_err(redb_error)?;
+            for entry in table.iter().map_err(redb_error)? {
+                let (stored_key, value) = entry.map_err(redb_error)?;
+                let request: BufferedRequest = decode(value.value())?;
+                let charged = buffered_charge(&request)?;
+                total_bytes = total_bytes.saturating_add(charged);
+                if let Some((stored_bind, _)) = parse_buffer_key(stored_key.value()) {
+                    if stored_bind == bind {
+                        count = count.saturating_add(1);
+                    }
+                    if owned_binds.contains(&stored_bind) {
+                        key_bytes = key_bytes.saturating_add(charged);
+                    }
+                }
+            }
+        }
+        {
+            let table = transaction.open_table(WEBHOOK_FAILED).map_err(redb_error)?;
+            for entry in table.iter().map_err(redb_error)? {
+                let (stored_key, value) = entry.map_err(redb_error)?;
+                total_bytes = total_bytes.saturating_add(value.value().len() as u64);
+                if let Some((stored_bind, _)) = parse_buffer_key(stored_key.value())
+                    && owned_binds.contains(&stored_bind)
+                {
+                    key_bytes = key_bytes.saturating_add(value.value().len() as u64);
+                }
+            }
+        }
+        if count >= quotas.max_requests {
+            return Err(DbError::BufferQuota("endpoint request count reached".to_owned()));
+        }
+        let next_seq = {
+            let mut sequences = transaction.open_table(WEBHOOK_SEQUENCE).map_err(redb_error)?;
+            let previous = sequences
+                .get(bind.as_bytes().as_slice())
+                .map_err(redb_error)?
+                .map_or(0, |value| value.value());
+            let next = previous.checked_add(1).ok_or_else(|| {
+                DbError::BufferQuota("endpoint sequence space exhausted".to_owned())
+            })?;
+            sequences.insert(bind.as_bytes().as_slice(), next).map_err(redb_error)?;
+            next
+        };
+        request.seq = next_seq;
+        let encoded = encode(&request)?;
+        let added = buffered_charge(&request)?;
+        if total_bytes.saturating_add(added) > quotas.total_bytes
+            || key_bytes.saturating_add(added) > quotas.key_bytes
+        {
+            return Err(DbError::BufferQuota("byte quota reached".to_owned()));
+        }
+        {
+            let mut table = transaction.open_table(WEBHOOK_BUFFER).map_err(redb_error)?;
+            table
+                .insert(buffer_key(bind, next_seq).as_slice(), encoded.as_slice())
+                .map_err(redb_error)?;
+        }
+        transaction.commit().map_err(redb_error)?;
+        Ok(next_seq)
+    }
+
+    /// Returns the oldest active buffered request for one bind.
+    pub fn first_buffered(&self, bind: Uuid) -> Result<Option<BufferedRequest>, DbError> {
+        let transaction = self.database.begin_read().map_err(redb_error)?;
+        let table = transaction.open_table(WEBHOOK_BUFFER).map_err(redb_error)?;
+        let mut first = None;
+        for entry in table.iter().map_err(redb_error)? {
+            let (key, value) = entry.map_err(redb_error)?;
+            if parse_buffer_key(key.value()).is_some_and(|(stored, _)| stored == bind) {
+                let request = decode::<BufferedRequest>(value.value())?;
+                if first.as_ref().is_none_or(|current: &BufferedRequest| request.seq < current.seq)
+                {
+                    first = Some(request);
+                }
+            }
+        }
+        Ok(first)
+    }
+
+    /// Returns active and failed queue counts for one bind.
+    pub fn buffered_counts(&self, bind: Uuid) -> Result<(u32, u32), DbError> {
+        Ok((self.count_raw(WEBHOOK_BUFFER, bind)?, self.count_raw(WEBHOOK_FAILED, bind)?))
+    }
+
     fn put_raw(
         &self,
         definition: TableDefinition<&[u8], &[u8]>,
@@ -184,7 +310,7 @@ impl RelayDb {
         Ok(table.get(key).map_err(redb_error)?.map(|value| value.value().to_vec()))
     }
 
-    fn delete_raw(
+    pub(crate) fn delete_raw(
         &self,
         definition: TableDefinition<&[u8], &[u8]>,
         key: &[u8],
@@ -207,6 +333,7 @@ fn initialize_schema(database: &Database, version: u64) -> Result<(), DbError> {
         transaction.open_table(KEYS).map_err(redb_error)?;
         transaction.open_table(WEBHOOK_BUFFER).map_err(redb_error)?;
         transaction.open_table(WEBHOOK_FAILED).map_err(redb_error)?;
+        transaction.open_table(WEBHOOK_SEQUENCE).map_err(redb_error)?;
         let mut meta = transaction.open_table(META).map_err(redb_error)?;
         meta.insert(SCHEMA_VERSION_KEY, version).map_err(redb_error)?;
     }
@@ -276,18 +403,24 @@ impl FileSync {
     }
 }
 
-fn buffer_key(bind: Uuid, seq: u64) -> [u8; 24] {
+pub(crate) fn buffer_key(bind: Uuid, seq: u64) -> [u8; 24] {
     let mut key = [0_u8; 24];
     key[..16].copy_from_slice(bind.as_bytes());
     key[16..].copy_from_slice(&seq.to_be_bytes());
     key
 }
 
-fn encode<T: Serialize>(value: &T) -> Result<Vec<u8>, DbError> {
+pub(crate) fn parse_buffer_key(key: &[u8]) -> Option<(Uuid, u64)> {
+    let bind = Uuid::from_slice(key.get(..16)?).ok()?;
+    let sequence = u64::from_be_bytes(key.get(16..24)?.try_into().ok()?);
+    Some((bind, sequence))
+}
+
+pub(crate) fn encode<T: Serialize>(value: &T) -> Result<Vec<u8>, DbError> {
     serde_json::to_vec(value).map_err(|error| DbError::Data(error.to_string()))
 }
 
-fn decode<T: DeserializeOwned>(value: &[u8]) -> Result<T, DbError> {
+pub(crate) fn decode<T: DeserializeOwned>(value: &[u8]) -> Result<T, DbError> {
     serde_json::from_slice(value).map_err(|error| DbError::Data(error.to_string()))
 }
 
@@ -302,7 +435,18 @@ fn set_mode(path: &Utf8Path, mode: u32) -> Result<(), DbError> {
         .map_err(|source| DbError::Io { path: path.to_owned(), source })
 }
 
-fn redb_error(error: impl std::fmt::Display) -> DbError {
+fn buffered_charge(request: &BufferedRequest) -> Result<u64, DbError> {
+    let active = encode(request)?.len();
+    let failed = encode(&FailedWebhook {
+        request: request.clone(),
+        reason: "😀".repeat(512),
+        failed_at: Timestamp::now(),
+    })?
+    .len();
+    Ok(active.max(failed).try_into().unwrap_or(u64::MAX))
+}
+
+pub(crate) fn redb_error(error: impl std::fmt::Display) -> DbError {
     DbError::Redb(error.to_string())
 }
 
@@ -318,6 +462,9 @@ pub enum DbError {
     /// Filesystem operation failed.
     #[error("database filesystem operation failed for {path}: {source}")]
     Io { path: Utf8PathBuf, source: io::Error },
+    /// A durable buffer quota was exhausted.
+    #[error("buffer quota exceeded: {0}")]
+    BufferQuota(String),
     /// Database schema was created by a newer relay.
     #[error("database schema {found} is newer than supported schema {supported}")]
     NewerSchema { found: u64, supported: u64 },

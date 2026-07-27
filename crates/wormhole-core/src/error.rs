@@ -28,6 +28,12 @@ pub enum DriverError {
     /// The endpoint requests unsupported options.
     #[error("driver capability mismatch: {0}")]
     Capability(String),
+    /// Local HTTP target connection failed before request transmission.
+    #[error("local connection failed: {0}")]
+    LocalConnect(String),
+    /// Local HTTP target delivery exhausted its policy.
+    #[error("local delivery failed: {0}")]
+    LocalDelivery(String),
     /// Remote or local transport failed.
     #[error("driver transport failed: {0}")]
     Transport(String),

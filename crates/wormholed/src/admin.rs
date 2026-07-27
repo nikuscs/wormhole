@@ -11,7 +11,7 @@ use axum::{
     Json, Router,
     extract::{Path as AxumPath, State},
     http::StatusCode,
-    routing::{delete, get},
+    routing::{delete, get, post},
 };
 use camino::Utf8Path;
 use nix::fcntl::{Flock, FlockArg};
@@ -76,6 +76,9 @@ fn router(state: AdminState) -> Router {
         .route("/v1/status", get(status))
         .route("/v1/binds", get(list_binds))
         .route("/v1/binds/{id}", delete(delete_bind))
+        .route("/v1/webhooks/failed", get(list_failed_webhooks))
+        .route("/v1/webhooks/failed/{bind}/{seq}", delete(delete_failed_webhook))
+        .route("/v1/webhooks/failed/{bind}/{seq}/retry", post(retry_failed_webhook))
         .route("/v1/keys", get(list_keys).post(authorize_key))
         .route("/v1/keys/{fingerprint}", delete(revoke_key))
         .route("/v1/openapi.json", get(openapi_json))
@@ -140,13 +143,60 @@ async fn delete_bind(
         false
     };
     admin.state.registry.remove(id, true).map_err(internal)?;
-    admin.state.database.delete_bind(id).map_err(internal)?;
+    admin.state.database.delete_bind_data(id).map_err(internal)?;
     if !session_notified {
         admin.state.remove_bind(&handle.key_fpr);
     }
     if let PersistedEndpoint::TcpPort(port) = handle.endpoint {
         admin.state.tcp_edges.remove_listener(port);
     }
+    Ok(StatusCode::NO_CONTENT)
+}
+
+#[utoipa::path(get, path = "/v1/webhooks/failed", responses((status = 200, body = [FailedWebhookResponse])))]
+async fn list_failed_webhooks(
+    State(admin): State<AdminState>,
+) -> Result<Json<Vec<FailedWebhookResponse>>, AdminResponseError> {
+    let rows = admin
+        .state
+        .database
+        .list_failed()
+        .map_err(internal)?
+        .into_iter()
+        .map(|(bind, seq, failed)| FailedWebhookResponse {
+            bind,
+            seq,
+            reason: failed.reason,
+            failed_at: failed.failed_at.to_string(),
+        })
+        .collect();
+    Ok(Json(rows))
+}
+
+#[utoipa::path(post, path = "/v1/webhooks/failed/{bind}/{seq}/retry", params(("bind" = Uuid, Path), ("seq" = u64, Path)), responses((status = 204), (status = 404)))]
+async fn retry_failed_webhook(
+    State(admin): State<AdminState>,
+    AxumPath((bind, seq)): AxumPath<(Uuid, u64)>,
+) -> Result<StatusCode, AdminResponseError> {
+    if !admin.state.database.retry_failed(bind, seq).map_err(internal)? {
+        return Err(not_found("failed webhook not found"));
+    }
+    notify_buffer_status(&admin.state, bind).await?;
+    if let Some(handle) = admin.state.registry.get_bind(bind) {
+        crate::buffer::spawn_drain(Arc::clone(&admin.state), handle);
+    }
+    Ok(StatusCode::NO_CONTENT)
+}
+
+#[utoipa::path(delete, path = "/v1/webhooks/failed/{bind}/{seq}", params(("bind" = Uuid, Path), ("seq" = u64, Path)), responses((status = 204), (status = 404)))]
+async fn delete_failed_webhook(
+    State(admin): State<AdminState>,
+    AxumPath((bind, seq)): AxumPath<(Uuid, u64)>,
+) -> Result<StatusCode, AdminResponseError> {
+    if !admin.state.database.delete_failed(bind, seq).map_err(internal)? {
+        return Err(not_found("failed webhook not found"));
+    }
+    notify_buffer_status(&admin.state, bind).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -187,6 +237,20 @@ async fn revoke_key(
 ) -> Result<StatusCode, AdminResponseError> {
     admin.state.auth.revoke(&fingerprint).map_err(bad_request)?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+async fn notify_buffer_status(state: &Arc<AppState>, bind: Uuid) -> Result<(), AdminResponseError> {
+    let Some(handle) = state.registry.get_bind(bind) else {
+        return Ok(());
+    };
+    let Some(session) = handle.session() else {
+        return Ok(());
+    };
+    let (pending, failed) = state.database.buffered_counts(bind).map_err(internal)?;
+    session
+        .send(SessionCommand::BufferedStatus { bind, pending, failed })
+        .await
+        .map_err(|_| internal("owning session closed"))
 }
 
 async fn openapi_json() -> Json<utoipa::openapi::OpenApi> {
@@ -265,6 +329,14 @@ pub struct BindResponse {
 }
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct FailedWebhookResponse {
+    pub bind: Uuid,
+    pub seq: u64,
+    pub reason: String,
+    pub failed_at: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct KeyResponse {
     pub fingerprint: String,
     pub name: String,
@@ -304,10 +376,13 @@ fn not_found(message: &str) -> AdminResponseError {
 
 #[derive(OpenApi)]
 #[openapi(
-    paths(status, list_binds, delete_bind, list_keys, authorize_key, revoke_key),
+    paths(
+        status, list_binds, delete_bind, list_failed_webhooks, retry_failed_webhook,
+        delete_failed_webhook, list_keys, authorize_key, revoke_key
+    ),
     components(schemas(
-        StatusResponse, CertificateExpiry, BindResponse, KeyResponse, AuthorizeKeyRequest,
-        KeyFingerprint, ErrorResponse
+        StatusResponse, CertificateExpiry, BindResponse, FailedWebhookResponse, KeyResponse,
+        AuthorizeKeyRequest, KeyFingerprint, ErrorResponse
     )),
     tags((name = "admin", description = "Local relay administration"))
 )]

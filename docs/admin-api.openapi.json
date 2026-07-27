@@ -144,6 +144,97 @@
           }
         }
       }
+    },
+    "/v1/webhooks/failed": {
+      "get": {
+        "tags": [],
+        "operationId": "list_failed_webhooks",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/FailedWebhookResponse"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/webhooks/failed/{bind}/{seq}": {
+      "delete": {
+        "tags": [],
+        "operationId": "delete_failed_webhook",
+        "parameters": [
+          {
+            "name": "bind",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "seq",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": ""
+          },
+          "404": {
+            "description": ""
+          }
+        }
+      }
+    },
+    "/v1/webhooks/failed/{bind}/{seq}/retry": {
+      "post": {
+        "tags": [],
+        "operationId": "retry_failed_webhook",
+        "parameters": [
+          {
+            "name": "bind",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "seq",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": ""
+          },
+          "404": {
+            "description": ""
+          }
+        }
+      }
     }
   },
   "components": {
@@ -223,6 +314,32 @@
         "properties": {
           "error": {
             "type": "string"
+          }
+        }
+      },
+      "FailedWebhookResponse": {
+        "type": "object",
+        "required": [
+          "bind",
+          "seq",
+          "reason",
+          "failed_at"
+        ],
+        "properties": {
+          "bind": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "failed_at": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "seq": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
           }
         }
       },

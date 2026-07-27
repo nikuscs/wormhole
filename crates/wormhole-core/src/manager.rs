@@ -268,6 +268,9 @@ impl TunnelManager {
                 driver: spec.driver.clone(),
                 urls: Vec::new(),
                 status: EndpointStatus::Reconnecting,
+                buffered_delivered: 0,
+                buffered_pending: 0,
+                buffered_failed: 0,
                 since: jiff::Timestamp::now(),
             },
         );
@@ -340,6 +343,8 @@ impl TunnelManager {
                 auth: None,
                 retry: None,
                 inspect: config.defaults.inspect,
+                inspect_assets: false,
+                capture_body_max: 1024 * 1024,
                 reservation: None,
             })
             .collect()
@@ -460,6 +465,14 @@ fn apply_event(
             tracing::Level::DEBUG => tracing::debug!(endpoint = %id, %message),
             tracing::Level::TRACE => tracing::trace!(endpoint = %id, %message),
         },
+        DriverEvent::BufferedDelivery { pending, failed, delivered_delta } => {
+            if let Some(endpoint) = endpoints.write().get_mut(&id) {
+                endpoint.buffered_pending = pending;
+                endpoint.buffered_failed = failed;
+                endpoint.buffered_delivered =
+                    endpoint.buffered_delivered.saturating_add(delivered_delta);
+            }
+        }
         DriverEvent::Handoff(_) | DriverEvent::Captured(_) => {}
     }
 }

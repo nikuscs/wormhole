@@ -5,9 +5,6 @@ use thiserror::Error;
 /// One command failure.
 #[derive(Debug, Error)]
 pub enum CliError {
-    /// Command exists for API stability but belongs to a later stage.
-    #[error("{0} is not yet implemented")]
-    Unimplemented(&'static str),
     /// Daemon lifecycle failed.
     #[error(transparent)]
     Daemon(#[from] crate::daemon::DaemonError),
@@ -72,7 +69,6 @@ impl CliError {
             Self::Partial => 6,
             Self::ChildExit(code) => *code,
             Self::Client(crate::client::ClientError::Api { .. })
-            | Self::Unimplemented(_)
             | Self::Daemon(_)
             | Self::Runtime(_)
             | Self::Manager(_)

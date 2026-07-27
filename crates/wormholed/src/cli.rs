@@ -25,8 +25,10 @@ enum Command {
     Key(KeyArgs),
     /// Show relay health and counters.
     Status(JsonArgs),
-    /// List public binds without reservation secrets.
-    Binds(JsonArgs),
+    /// List or remove public binds without exposing reservation secrets.
+    Binds(BindsArgs),
+    /// Manage durable webhook queues.
+    Webhooks(crate::webhook_cli::WebhookArgs),
 }
 
 #[derive(Debug, Args)]
@@ -41,6 +43,20 @@ struct JsonArgs {
     /// Emit stable machine-readable JSON.
     #[arg(long)]
     json: bool,
+}
+
+#[derive(Debug, Args)]
+struct BindsArgs {
+    #[command(subcommand)]
+    command: Option<BindsCommand>,
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Debug, Subcommand)]
+enum BindsCommand {
+    Ls(JsonArgs),
+    Rm { id: uuid::Uuid },
 }
 
 #[derive(Debug, Args)]
@@ -76,6 +92,7 @@ pub async fn run() -> Result<()> {
         Command::Key(args) => key(&cli.config, args).await,
         Command::Status(args) => status(&cli.config, args).await,
         Command::Binds(args) => binds(&cli.config, args).await,
+        Command::Webhooks(args) => crate::webhook_cli::run(&cli.config, args).await,
     }
 }
 
@@ -119,6 +136,7 @@ async fn serve(path: &Utf8PathBuf, args: ServeArgs) -> Result<()> {
         auth,
         config.limits.clone(),
     )?);
+    wormholed::buffer::spawn_janitor(Arc::clone(&state));
     let https = wormholed::edge_https::HttpsEdge::from_listener(
         https_listener,
         Arc::clone(&state),
@@ -361,8 +379,35 @@ async fn status(path: &Utf8Path, args: JsonArgs) -> Result<()> {
     }
 }
 
-async fn binds(path: &Utf8Path, args: JsonArgs) -> Result<()> {
+async fn binds(path: &Utf8Path, args: BindsArgs) -> Result<()> {
     use http::Method;
+    if let Some(BindsCommand::Rm { id }) = &args.command {
+        let id = *id;
+        let config = wormholed::config::WormholedConfig::load(path)?;
+        let socket = config.server.data_dir.join("admin.sock");
+        match wormholed::admin_client::request::<serde_json::Value>(
+            socket.as_std_path(),
+            Method::DELETE,
+            &format!("/v1/binds/{id}"),
+            None,
+        )
+        .await
+        {
+            Ok(_) => output::human(&format!("removed {id}")),
+            Err(wormholed::admin_client::AdminClientError::Connect(_)) => {
+                let database = wormholed::db::RelayDb::open(&config.server.data_dir)?;
+                database.delete_bind_data(id)?;
+                output::human(&format!("removed {id}"));
+            }
+            Err(error) => return Err(error.into()),
+        }
+        return Ok(());
+    }
+    let json = match args.command {
+        Some(BindsCommand::Ls(list)) => list.json,
+        Some(BindsCommand::Rm { .. }) => unreachable!(),
+        None => args.json,
+    };
     let config = wormholed::config::WormholedConfig::load(path)?;
     let socket = config.server.data_dir.join("admin.sock");
     let response = match wormholed::admin_client::request::<serde_json::Value>(
@@ -395,12 +440,12 @@ async fn binds(path: &Utf8Path, args: JsonArgs) -> Result<()> {
                     ),
                 })
                 .collect::<Vec<_>>();
-            return render_binds(&values, args.json);
+            return render_binds(&values, json);
         }
         Err(error) => return Err(error.into()),
     };
     let values: Vec<wormholed::admin::BindResponse> = serde_json::from_slice(&response.body)?;
-    render_binds(&values, args.json)
+    render_binds(&values, json)
 }
 
 fn render_binds(values: &[wormholed::admin::BindResponse], json: bool) -> Result<()> {

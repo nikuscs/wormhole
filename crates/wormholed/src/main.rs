@@ -3,6 +3,7 @@
 
 mod cli;
 mod output;
+mod webhook_cli;
 
 use std::process::ExitCode;
 

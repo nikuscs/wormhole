@@ -35,6 +35,13 @@ server_name = "project.example"
 app = "127.0.0.3"
 [defaults]
 inspect = true
+[defaults.retry]
+attempts = 5
+backoff = "500ms"
+max_backoff = "30s"
+on = ["connect-error", "5xx"]
+max_body = "1MiB"
+total_deadline = "60s"
 "#,
     )
     .expect("project config");
@@ -56,6 +63,9 @@ app = "127.0.0.4"
     assert_eq!(config.default_remote.as_deref(), Some("explicit"));
     assert_eq!(config.aliases.get("app").map(String::as_str), Some("127.0.0.4"));
     assert!(config.defaults.inspect);
+    let retry = config.defaults.retry.expect("retry defaults");
+    assert_eq!(retry.max_attempts, 5);
+    assert!(retry.retry_5xx);
     assert_eq!(config.defaults.drivers, ["wormhole"]);
     assert_eq!(config.remotes.len(), 3);
 }

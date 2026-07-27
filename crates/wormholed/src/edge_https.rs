@@ -19,8 +19,9 @@ use tokio_rustls::TlsAcceptor;
 use wormhole_proto::frames::{HeaderField, HttpRequestHead, StreamHeader};
 
 use crate::{
+    buffer::{BufferError, buffer_request},
     certs::CertResolver,
-    edge_auth::authorized,
+    edge_auth::{LinkDecision, authorized, link_decision},
     registry::{BindHandle, BindState, HostKey, HttpTunnelResponse, SessionCommand, UpgradeTunnel},
     session_streams::copy_bidirectional_idle,
     state::AppState,
@@ -140,11 +141,29 @@ async fn route_request(
     let Some(handle) = state.registry.get(&HostKey::Hostname(sni.to_owned())) else {
         return Ok(static_response(StatusCode::NOT_FOUND, "Not Found"));
     };
-    if handle.state() != BindState::Online {
-        return Ok(offline_response());
-    }
     if !authorized(&request, &handle).await {
-        return Ok(unauthorized_response());
+        match link_decision(&request, &handle, sni) {
+            LinkDecision::Authorized => {}
+            LinkDecision::Redirect { location, cookie } => {
+                return Ok(link_redirect(&location, &cookie));
+            }
+            LinkDecision::Denied => {
+                return Ok(static_response(StatusCode::FORBIDDEN, "Forbidden"));
+            }
+            LinkDecision::NotConfigured => return Ok(unauthorized_response(&handle)),
+        }
+    }
+    if handle.state() != BindState::Online {
+        if handle.buffer_policy.is_some() {
+            return Ok(match buffer_request(request, &handle, state).await {
+                Ok(_) => buffered_response(),
+                Err(BufferError::BodyTooLarge) => {
+                    static_response(StatusCode::PAYLOAD_TOO_LARGE, "Payload Too Large")
+                }
+                Err(_) => offline_response(),
+            });
+        }
+        return Ok(offline_response());
     }
     proxy_request(request, peer, sni, handle).await
 }
@@ -299,18 +318,44 @@ fn control_response(request: &Request<Incoming>) -> Response<EdgeBody> {
     }
 }
 
+fn link_redirect(location: &str, cookie: &str) -> Response<EdgeBody> {
+    let mut response = static_response(StatusCode::FOUND, "Found");
+    let headers = response.headers_mut();
+    if let Ok(value) = HeaderValue::from_str(location) {
+        headers.insert(http::header::LOCATION, value);
+    }
+    if let Ok(value) = HeaderValue::from_str(cookie) {
+        headers.insert(http::header::SET_COOKIE, value);
+    }
+    headers.insert(http::header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    headers.insert(http::header::REFERRER_POLICY, HeaderValue::from_static("no-referrer"));
+    response
+}
+
+fn buffered_response() -> Response<EdgeBody> {
+    let mut response = static_response(StatusCode::ACCEPTED, "Accepted");
+    response
+        .headers_mut()
+        .insert(HeaderName::from_static("wormhole-buffered"), HeaderValue::from_static("true"));
+    response
+}
+
 fn offline_response() -> Response<EdgeBody> {
     let mut response = static_response(StatusCode::SERVICE_UNAVAILABLE, "Tunnel Offline");
     response.headers_mut().insert(http::header::RETRY_AFTER, HeaderValue::from_static("30"));
     response
 }
 
-fn unauthorized_response() -> Response<EdgeBody> {
+fn unauthorized_response(handle: &BindHandle) -> Response<EdgeBody> {
     let mut response = static_response(StatusCode::UNAUTHORIZED, "Unauthorized");
-    response.headers_mut().insert(
-        http::header::WWW_AUTHENTICATE,
-        HeaderValue::from_static("Basic realm=\"wormhole\""),
-    );
+    let basic = handle.auth.as_ref().is_some_and(|auth| auth.basic.is_some())
+        || handle.auth_verifier().is_some_and(|auth| auth.basic_argon2.is_some());
+    if basic {
+        response.headers_mut().insert(
+            http::header::WWW_AUTHENTICATE,
+            HeaderValue::from_static("Basic realm=\"wormhole\""),
+        );
+    }
     response
 }
 
