@@ -1,0 +1,1242 @@
+---
+source: crates/wormhole-cli/tests/utilities.rs
+expression: "String::from_utf8_lossy(&completions.stdout)"
+---
+#compdef wormhole
+
+autoload -U is-at-least
+
+_wormhole() {
+    typeset -A opt_args
+    typeset -a _arguments_options
+    local ret=1
+
+    if is-at-least 5.2; then
+        _arguments_options=(-s -S -C)
+    else
+        _arguments_options=(-s -C)
+    fi
+
+    local context curcontext="$curcontext" state line
+    _arguments "${_arguments_options[@]}" : \
+'--config=[Override the global configuration file]:PATH:_files' \
+'--json[Emit stable JSON instead of human-readable output]' \
+'(-v --verbose)-q[Suppress nonessential diagnostics]' \
+'(-v --verbose)--quiet[Suppress nonessential diagnostics]' \
+'*-v[Increase diagnostic verbosity (repeat for trace logging)]' \
+'*--verbose[Increase diagnostic verbosity (repeat for trace logging)]' \
+'-h[Print help]' \
+'--help[Print help]' \
+'-V[Print version]' \
+'--version[Print version]' \
+":: :_wormhole_commands" \
+"*::: :->wormhole" \
+&& ret=0
+    case $state in
+    (wormhole)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:wormhole-command-$line[1]:"
+        case $line[1] in
+            (http)
+_arguments "${_arguments_options[@]}" : \
+'*--endpoint=[Add a provider endpoint specification; repeat for multiple URLs]:DRIVER[:QUALIFIER]:_default' \
+'--host=[Request a server-owned subdomain label]:HOST:_default' \
+'--buffer=[Buffer up to this many offline requests]:COUNT:_default' \
+'--retry=[Configure local delivery retries]:SPEC:_default' \
+'(--auth-file)--auth=[Configure relay-edge authentication]:POLICY:_default' \
+'(--auth)--auth-file=[Read relay-edge authentication from a file]:PATH:_files' \
+'--remote=[Select a named Wormhole remote]:REMOTE:_default' \
+'--name=[Stable service name]:NAME:_default' \
+'--config=[Override the global configuration file]:PATH:_files' \
+'--persist[Keep the endpoint and reclaim its reservation after restarts]' \
+'--no-inspect[Disable request inspection]' \
+'--foreground[Run the tunnel manager in this process]' \
+'--json[Emit stable JSON instead of human-readable output]' \
+'(-v --verbose)-q[Suppress nonessential diagnostics]' \
+'(-v --verbose)--quiet[Suppress nonessential diagnostics]' \
+'*-v[Increase diagnostic verbosity (repeat for trace logging)]' \
+'*--verbose[Increase diagnostic verbosity (repeat for trace logging)]' \
+'-h[Print help]' \
+'--help[Print help]' \
+'-V[Print version]' \
+'--version[Print version]' \
+':target -- Local target\: PORT, HOST\:PORT, or ALIAS\:PORT:_default' \
+&& ret=0
+;;
+(tcp)
+_arguments "${_arguments_options[@]}" : \
+'*--endpoint=[Add a provider endpoint specification; repeat for multiple URLs]:DRIVER[:QUALIFIER]:_default' \
+'--host=[Request a server-owned subdomain label]:HOST:_default' \
+'--buffer=[Buffer up to this many offline requests]:COUNT:_default' \
+'--retry=[Configure local delivery retries]:SPEC:_default' \
+'(--auth-file)--auth=[Configure relay-edge authentication]:POLICY:_default' \
+'(--auth)--auth-file=[Read relay-edge authentication from a file]:PATH:_files' \
+'--remote=[Select a named Wormhole remote]:REMOTE:_default' \
+'--name=[Stable service name]:NAME:_default' \
+'--config=[Override the global configuration file]:PATH:_files' \
+'--persist[Keep the endpoint and reclaim its reservation after restarts]' \
+'--no-inspect[Disable request inspection]' \
+'--foreground[Run the tunnel manager in this process]' \
+'--json[Emit stable JSON instead of human-readable output]' \
+'(-v --verbose)-q[Suppress nonessential diagnostics]' \
+'(-v --verbose)--quiet[Suppress nonessential diagnostics]' \
+'*-v[Increase diagnostic verbosity (repeat for trace logging)]' \
+'*--verbose[Increase diagnostic verbosity (repeat for trace logging)]' \
+'-h[Print help]' \
+'--help[Print help]' \
+'-V[Print version]' \
+'--version[Print version]' \
+':target -- Local target\: PORT, HOST\:PORT, or ALIAS\:PORT:_default' \
+&& ret=0
+;;
+(run)
+_arguments "${_arguments_options[@]}" : \
+'--app-port=[Expected application port; skips automatic allocation]:APP_PORT:_default' \
+'*--endpoint=[Add a provider endpoint specification; repeat for multiple URLs]:DRIVER[:QUALIFIER]:_default' \
+'--host=[Request a server-owned subdomain label]:HOST:_default' \
+'--buffer=[Buffer up to this many offline requests]:COUNT:_default' \
+'--retry=[Configure local delivery retries]:SPEC:_default' \
+'(--auth-file)--auth=[Configure relay-edge authentication]:POLICY:_default' \
+'(--auth)--auth-file=[Read relay-edge authentication from a file]:PATH:_files' \
+'--remote=[Select a named Wormhole remote]:REMOTE:_default' \
+'--name=[Stable service name]:NAME:_default' \
+'--config=[Override the global configuration file]:PATH:_files' \
+'--persist[Keep the endpoint and reclaim its reservation after restarts]' \
+'--no-inspect[Disable request inspection]' \
+'--foreground[Run the tunnel manager in this process]' \
+'--json[Emit stable JSON instead of human-readable output]' \
+'(-v --verbose)-q[Suppress nonessential diagnostics]' \
+'(-v --verbose)--quiet[Suppress nonessential diagnostics]' \
+'*-v[Increase diagnostic verbosity (repeat for trace logging)]' \
+'*--verbose[Increase diagnostic verbosity (repeat for trace logging)]' \
+'-h[Print help]' \
+'--help[Print help]' \
+'-V[Print version]' \
+'--version[Print version]' \
+'*::command -- Command and arguments to run:_default' \
+&& ret=0
+;;
+(up)
+_arguments "${_arguments_options[@]}" : \
+'--config=[Override the global configuration file]:PATH:_files' \
+'--json[Emit stable JSON instead of human-readable output]' \
+'(-v --verbose)-q[Suppress nonessential diagnostics]' \
+'(-v --verbose)--quiet[Suppress nonessential diagnostics]' \
+'*-v[Increase diagnostic verbosity (repeat for trace logging)]' \
+'*--verbose[Increase diagnostic verbosity (repeat for trace logging)]' \
+'-h[Print help]' \
+'--help[Print help]' \
+'-V[Print version]' \
+'--version[Print version]' \
+'*::services -- Service names; omitted means every project service:_default' \
+&& ret=0
+;;
+(down)
+_arguments "${_arguments_options[@]}" : \
+'--config=[Override the global configuration file]:PATH:_files' \
+'--forget[Also delete server-side persistent reservations]' \
+'--json[Emit stable JSON instead of human-readable output]' \
+'(-v --verbose)-q[Suppress nonessential diagnostics]' \
+'(-v --verbose)--quiet[Suppress nonessential diagnostics]' \
+'*-v[Increase diagnostic verbosity (repeat for trace logging)]' \
+'*--verbose[Increase diagnostic verbosity (repeat for trace logging)]' \
+'-h[Print help]' \
+'--help[Print help]' \
+'-V[Print version]' \
+'--version[Print version]' \
+'*::targets -- Service names or endpoint identifiers:_default' \
+&& ret=0
+;;
+(ls)
+_arguments "${_arguments_options[@]}" : \
+'--config=[Override the global configuration file]:PATH:_files' \
+'--watch[Continuously wait for endpoint changes]' \
+'--json[Emit stable JSON instead of human-readable output]' \
+'(-v --verbose)-q[Suppress nonessential diagnostics]' \
+'(-v --verbose)--quiet[Suppress nonessential diagnostics]' \
+'*-v[Increase diagnostic verbosity (repeat for trace logging)]' \
+'*--verbose[Increase diagnostic verbosity (repeat for trace logging)]' \
+'-h[Print help]' \
+'--help[Print help]' \
+'-V[Print version]' \
+'--version[Print version]' \
+&& ret=0
+;;
+(status)
+_arguments "${_arguments_options[@]}" : \
+'--config=[Override the global configuration file]:PATH:_files' \
+'--json[Emit stable JSON instead of human-readable output]' \
+'(-v --verbose)-q[Suppress nonessential diagnostics]' \
+'(-v --verbose)--quiet[Suppress nonessential diagnostics]' \
+'*-v[Increase diagnostic verbosity (repeat for trace logging)]' \
+'*--verbose[Increase diagnostic verbosity (repeat for trace logging)]' \
+'-h[Print help]' \
+'--help[Print help]' \
+'-V[Print version]' \
+'--version[Print version]' \
+&& ret=0
+;;
+(inspect)
+_arguments "${_arguments_options[@]}" : \
+'--endpoint=[Restrict captures to one endpoint]:ENDPOINT:_default' \
+'--config=[Override the global configuration file]:PATH:_files' \
+'--follow[Follow newly captured requests]' \
+'--json[Emit stable JSON instead of human-readable output]' \
+'(-v --verbose)-q[Suppress nonessential diagnostics]' \
+'(-v --verbose)--quiet[Suppress nonessential diagnostics]' \
+'*-v[Increase diagnostic verbosity (repeat for trace logging)]' \
+'*--verbose[Increase diagnostic verbosity (repeat for trace logging)]' \
+'-h[Print help]' \
+'--help[Print help]' \
+'-V[Print version]' \
+'--version[Print version]' \
+&& ret=0
+;;
+(replay)
+_arguments "${_arguments_options[@]}" : \
+'--config=[Override the global configuration file]:PATH:_files' \
+'--json[Emit stable JSON instead of human-readable output]' \
+'(-v --verbose)-q[Suppress nonessential diagnostics]' \
+'(-v --verbose)--quiet[Suppress nonessential diagnostics]' \
+'*-v[Increase diagnostic verbosity (repeat for trace logging)]' \
+'*--verbose[Increase diagnostic verbosity (repeat for trace logging)]' \
+'-h[Print help]' \
+'--help[Print help]' \
+'-V[Print version]' \
+'--version[Print version]' \
+':request_id:_default' \
+&& ret=0
+;;
+(interfaces)
+_arguments "${_arguments_options[@]}" : \
+'--config=[Override the global configuration file]:PATH:_files' \
+'--json[Emit stable JSON instead of human-readable output]' \
+'(-v --verbose)-q[Suppress nonessential diagnostics]' \
+'(-v --verbose)--quiet[Suppress nonessential diagnostics]' \
+'*-v[Increase diagnostic verbosity (repeat for trace logging)]' \
+'*--verbose[Increase diagnostic verbosity (repeat for trace logging)]' \
+'-h[Print help]' \
+'--help[Print help]' \
+'-V[Print version]' \
+'--version[Print version]' \
+&& ret=0
+;;
+(remote)
+_arguments "${_arguments_options[@]}" : \
+'--config=[Override the global configuration file]:PATH:_files' \
+'--json[Emit stable JSON instead of human-readable output]' \
+'(-v --verbose)-q[Suppress nonessential diagnostics]' \
+'(-v --verbose)--quiet[Suppress nonessential diagnostics]' \
+'*-v[Increase diagnostic verbosity (repeat for trace logging)]' \
+'*--verbose[Increase diagnostic verbosity (repeat for trace logging)]' \
+'-h[Print help]' \
+'--help[Print help]' \
+'-V[Print version]' \
+'--version[Print version]' \
+":: :_wormhole__subcmd__remote_commands" \
+"*::: :->remote" \
+&& ret=0
+
+    case $state in
+    (remote)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:wormhole-remote-command-$line[1]:"
+        case $line[1] in
+            (add)
+_arguments "${_arguments_options[@]}" : \
+'--identity=[]:IDENTITY:_files' \
+'--config=[Override the global configuration file]:PATH:_files' \
+'--json[Emit stable JSON instead of human-readable output]' \
+'(-v --verbose)-q[Suppress nonessential diagnostics]' \
+'(-v --verbose)--quiet[Suppress nonessential diagnostics]' \
+'*-v[Increase diagnostic verbosity (repeat for trace logging)]' \
+'*--verbose[Increase diagnostic verbosity (repeat for trace logging)]' \
+'-h[Print help]' \
+'--help[Print help]' \
+'-V[Print version]' \
+'--version[Print version]' \
+':name:_default' \
+':addr:_default' \
+&& ret=0
+;;
+(ls)
+_arguments "${_arguments_options[@]}" : \
+'--config=[Override the global configuration file]:PATH:_files' \
+'--json[Emit stable JSON instead of human-readable output]' \
+'(-v --verbose)-q[Suppress nonessential diagnostics]' \
+'(-v --verbose)--quiet[Suppress nonessential diagnostics]' \
+'*-v[Increase diagnostic verbosity (repeat for trace logging)]' \
+'*--verbose[Increase diagnostic verbosity (repeat for trace logging)]' \
+'-h[Print help]' \
+'--help[Print help]' \
+'-V[Print version]' \
+'--version[Print version]' \
+&& ret=0
+;;
+(rm)
+_arguments "${_arguments_options[@]}" : \
+'--config=[Override the global configuration file]:PATH:_files' \
+'--json[Emit stable JSON instead of human-readable output]' \
+'(-v --verbose)-q[Suppress nonessential diagnostics]' \
+'(-v --verbose)--quiet[Suppress nonessential diagnostics]' \
+'*-v[Increase diagnostic verbosity (repeat for trace logging)]' \
+'*--verbose[Increase diagnostic verbosity (repeat for trace logging)]' \
+'-h[Print help]' \
+'--help[Print help]' \
+'-V[Print version]' \
+'--version[Print version]' \
+':name:_default' \
+&& ret=0
+;;
+(test)
+_arguments "${_arguments_options[@]}" : \
+'--config=[Override the global configuration file]:PATH:_files' \
+'--json[Emit stable JSON instead of human-readable output]' \
+'(-v --verbose)-q[Suppress nonessential diagnostics]' \
+'(-v --verbose)--quiet[Suppress nonessential diagnostics]' \
+'*-v[Increase diagnostic verbosity (repeat for trace logging)]' \
+'*--verbose[Increase diagnostic verbosity (repeat for trace logging)]' \
+'-h[Print help]' \
+'--help[Print help]' \
+'-V[Print version]' \
+'--version[Print version]' \
+':name:_default' \
+&& ret=0
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+":: :_wormhole__subcmd__remote__subcmd__help_commands" \
+"*::: :->help" \
+&& ret=0
+
+    case $state in
+    (help)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:wormhole-remote-help-command-$line[1]:"
+        case $line[1] in
+            (add)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(ls)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(rm)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(test)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
+        esac
+    ;;
+esac
+;;
+(key)
+_arguments "${_arguments_options[@]}" : \
+'--config=[Override the global configuration file]:PATH:_files' \
+'--json[Emit stable JSON instead of human-readable output]' \
+'(-v --verbose)-q[Suppress nonessential diagnostics]' \
+'(-v --verbose)--quiet[Suppress nonessential diagnostics]' \
+'*-v[Increase diagnostic verbosity (repeat for trace logging)]' \
+'*--verbose[Increase diagnostic verbosity (repeat for trace logging)]' \
+'-h[Print help]' \
+'--help[Print help]' \
+'-V[Print version]' \
+'--version[Print version]' \
+":: :_wormhole__subcmd__key_commands" \
+"*::: :->key" \
+&& ret=0
+
+    case $state in
+    (key)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:wormhole-key-command-$line[1]:"
+        case $line[1] in
+            (show)
+_arguments "${_arguments_options[@]}" : \
+'--config=[Override the global configuration file]:PATH:_files' \
+'--json[Emit stable JSON instead of human-readable output]' \
+'(-v --verbose)-q[Suppress nonessential diagnostics]' \
+'(-v --verbose)--quiet[Suppress nonessential diagnostics]' \
+'*-v[Increase diagnostic verbosity (repeat for trace logging)]' \
+'*--verbose[Increase diagnostic verbosity (repeat for trace logging)]' \
+'-h[Print help]' \
+'--help[Print help]' \
+'-V[Print version]' \
+'--version[Print version]' \
+&& ret=0
+;;
+(rotate)
+_arguments "${_arguments_options[@]}" : \
+'--config=[Override the global configuration file]:PATH:_files' \
+'--json[Emit stable JSON instead of human-readable output]' \
+'(-v --verbose)-q[Suppress nonessential diagnostics]' \
+'(-v --verbose)--quiet[Suppress nonessential diagnostics]' \
+'*-v[Increase diagnostic verbosity (repeat for trace logging)]' \
+'*--verbose[Increase diagnostic verbosity (repeat for trace logging)]' \
+'-h[Print help]' \
+'--help[Print help]' \
+'-V[Print version]' \
+'--version[Print version]' \
+&& ret=0
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+":: :_wormhole__subcmd__key__subcmd__help_commands" \
+"*::: :->help" \
+&& ret=0
+
+    case $state in
+    (help)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:wormhole-key-help-command-$line[1]:"
+        case $line[1] in
+            (show)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(rotate)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
+        esac
+    ;;
+esac
+;;
+(doctor)
+_arguments "${_arguments_options[@]}" : \
+'--config=[Override the global configuration file]:PATH:_files' \
+'--json[Emit stable JSON instead of human-readable output]' \
+'(-v --verbose)-q[Suppress nonessential diagnostics]' \
+'(-v --verbose)--quiet[Suppress nonessential diagnostics]' \
+'*-v[Increase diagnostic verbosity (repeat for trace logging)]' \
+'*--verbose[Increase diagnostic verbosity (repeat for trace logging)]' \
+'-h[Print help]' \
+'--help[Print help]' \
+'-V[Print version]' \
+'--version[Print version]' \
+&& ret=0
+;;
+(daemon)
+_arguments "${_arguments_options[@]}" : \
+'--config=[Override the global configuration file]:PATH:_files' \
+'--json[Emit stable JSON instead of human-readable output]' \
+'(-v --verbose)-q[Suppress nonessential diagnostics]' \
+'(-v --verbose)--quiet[Suppress nonessential diagnostics]' \
+'*-v[Increase diagnostic verbosity (repeat for trace logging)]' \
+'*--verbose[Increase diagnostic verbosity (repeat for trace logging)]' \
+'-h[Print help]' \
+'--help[Print help]' \
+'-V[Print version]' \
+'--version[Print version]' \
+":: :_wormhole__subcmd__daemon_commands" \
+"*::: :->daemon" \
+&& ret=0
+
+    case $state in
+    (daemon)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:wormhole-daemon-command-$line[1]:"
+        case $line[1] in
+            (run)
+_arguments "${_arguments_options[@]}" : \
+'--config=[Override the global configuration file]:PATH:_files' \
+'--detach[Detach into a new session and log to the state directory]' \
+'--json[Emit stable JSON instead of human-readable output]' \
+'(-v --verbose)-q[Suppress nonessential diagnostics]' \
+'(-v --verbose)--quiet[Suppress nonessential diagnostics]' \
+'*-v[Increase diagnostic verbosity (repeat for trace logging)]' \
+'*--verbose[Increase diagnostic verbosity (repeat for trace logging)]' \
+'-h[Print help]' \
+'--help[Print help]' \
+'-V[Print version]' \
+'--version[Print version]' \
+&& ret=0
+;;
+(stop)
+_arguments "${_arguments_options[@]}" : \
+'--config=[Override the global configuration file]:PATH:_files' \
+'--json[Emit stable JSON instead of human-readable output]' \
+'(-v --verbose)-q[Suppress nonessential diagnostics]' \
+'(-v --verbose)--quiet[Suppress nonessential diagnostics]' \
+'*-v[Increase diagnostic verbosity (repeat for trace logging)]' \
+'*--verbose[Increase diagnostic verbosity (repeat for trace logging)]' \
+'-h[Print help]' \
+'--help[Print help]' \
+'-V[Print version]' \
+'--version[Print version]' \
+&& ret=0
+;;
+(status)
+_arguments "${_arguments_options[@]}" : \
+'--config=[Override the global configuration file]:PATH:_files' \
+'--json[Emit stable JSON instead of human-readable output]' \
+'(-v --verbose)-q[Suppress nonessential diagnostics]' \
+'(-v --verbose)--quiet[Suppress nonessential diagnostics]' \
+'*-v[Increase diagnostic verbosity (repeat for trace logging)]' \
+'*--verbose[Increase diagnostic verbosity (repeat for trace logging)]' \
+'-h[Print help]' \
+'--help[Print help]' \
+'-V[Print version]' \
+'--version[Print version]' \
+&& ret=0
+;;
+(reload)
+_arguments "${_arguments_options[@]}" : \
+'--config=[Override the global configuration file]:PATH:_files' \
+'--json[Emit stable JSON instead of human-readable output]' \
+'(-v --verbose)-q[Suppress nonessential diagnostics]' \
+'(-v --verbose)--quiet[Suppress nonessential diagnostics]' \
+'*-v[Increase diagnostic verbosity (repeat for trace logging)]' \
+'*--verbose[Increase diagnostic verbosity (repeat for trace logging)]' \
+'-h[Print help]' \
+'--help[Print help]' \
+'-V[Print version]' \
+'--version[Print version]' \
+&& ret=0
+;;
+(logs)
+_arguments "${_arguments_options[@]}" : \
+'--config=[Override the global configuration file]:PATH:_files' \
+'-f[Follow appended log lines]' \
+'--follow[Follow appended log lines]' \
+'--json[Emit stable JSON instead of human-readable output]' \
+'(-v --verbose)-q[Suppress nonessential diagnostics]' \
+'(-v --verbose)--quiet[Suppress nonessential diagnostics]' \
+'*-v[Increase diagnostic verbosity (repeat for trace logging)]' \
+'*--verbose[Increase diagnostic verbosity (repeat for trace logging)]' \
+'-h[Print help]' \
+'--help[Print help]' \
+'-V[Print version]' \
+'--version[Print version]' \
+&& ret=0
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+":: :_wormhole__subcmd__daemon__subcmd__help_commands" \
+"*::: :->help" \
+&& ret=0
+
+    case $state in
+    (help)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:wormhole-daemon-help-command-$line[1]:"
+        case $line[1] in
+            (run)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(stop)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(status)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(reload)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(logs)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
+        esac
+    ;;
+esac
+;;
+(completions)
+_arguments "${_arguments_options[@]}" : \
+'--config=[Override the global configuration file]:PATH:_files' \
+'--json[Emit stable JSON instead of human-readable output]' \
+'(-v --verbose)-q[Suppress nonessential diagnostics]' \
+'(-v --verbose)--quiet[Suppress nonessential diagnostics]' \
+'*-v[Increase diagnostic verbosity (repeat for trace logging)]' \
+'*--verbose[Increase diagnostic verbosity (repeat for trace logging)]' \
+'-h[Print help]' \
+'--help[Print help]' \
+'-V[Print version]' \
+'--version[Print version]' \
+':shell:(bash fish zsh)' \
+&& ret=0
+;;
+(share)
+_arguments "${_arguments_options[@]}" : \
+'--expires=[Share-link lifetime]:EXPIRES:_default' \
+'--config=[Override the global configuration file]:PATH:_files' \
+'--json[Emit stable JSON instead of human-readable output]' \
+'(-v --verbose)-q[Suppress nonessential diagnostics]' \
+'(-v --verbose)--quiet[Suppress nonessential diagnostics]' \
+'*-v[Increase diagnostic verbosity (repeat for trace logging)]' \
+'*--verbose[Increase diagnostic verbosity (repeat for trace logging)]' \
+'-h[Print help]' \
+'--help[Print help]' \
+'-V[Print version]' \
+'--version[Print version]' \
+':target -- Service name or endpoint identifier:_default' \
+&& ret=0
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+":: :_wormhole__subcmd__help_commands" \
+"*::: :->help" \
+&& ret=0
+
+    case $state in
+    (help)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:wormhole-help-command-$line[1]:"
+        case $line[1] in
+            (http)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(tcp)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(run)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(up)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(down)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(ls)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(status)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(inspect)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(replay)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(interfaces)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(remote)
+_arguments "${_arguments_options[@]}" : \
+":: :_wormhole__subcmd__help__subcmd__remote_commands" \
+"*::: :->remote" \
+&& ret=0
+
+    case $state in
+    (remote)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:wormhole-help-remote-command-$line[1]:"
+        case $line[1] in
+            (add)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(ls)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(rm)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(test)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
+(key)
+_arguments "${_arguments_options[@]}" : \
+":: :_wormhole__subcmd__help__subcmd__key_commands" \
+"*::: :->key" \
+&& ret=0
+
+    case $state in
+    (key)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:wormhole-help-key-command-$line[1]:"
+        case $line[1] in
+            (show)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(rotate)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
+(doctor)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(daemon)
+_arguments "${_arguments_options[@]}" : \
+":: :_wormhole__subcmd__help__subcmd__daemon_commands" \
+"*::: :->daemon" \
+&& ret=0
+
+    case $state in
+    (daemon)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:wormhole-help-daemon-command-$line[1]:"
+        case $line[1] in
+            (run)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(stop)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(status)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(reload)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(logs)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
+(completions)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(share)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
+        esac
+    ;;
+esac
+}
+
+(( $+functions[_wormhole_commands] )) ||
+_wormhole_commands() {
+    local commands; commands=(
+'http:Expose a local HTTP service' \
+'tcp:Expose a local TCP service' \
+'run:Run a command and expose its listening port' \
+'up:Start services from wormhole.toml' \
+'down:Stop project services or endpoint identifiers' \
+'ls:List active endpoints' \
+'status:Show daemon status' \
+'inspect:Inspect captured HTTP requests' \
+'replay:Replay one captured request' \
+'interfaces:List discovered interface aliases' \
+'remote:Manage named Wormhole remotes' \
+'key:Manage the client identity key' \
+'doctor:Run structured health checks' \
+'daemon:Manage the per-user daemon' \
+'completions:Generate shell completions' \
+'share:Create an expiring share link' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
+    _describe -t commands 'wormhole commands' commands "$@"
+}
+(( $+functions[_wormhole__subcmd__completions_commands] )) ||
+_wormhole__subcmd__completions_commands() {
+    local commands; commands=()
+    _describe -t commands 'wormhole completions commands' commands "$@"
+}
+(( $+functions[_wormhole__subcmd__daemon_commands] )) ||
+_wormhole__subcmd__daemon_commands() {
+    local commands; commands=(
+'run:Run the daemon' \
+'stop:Gracefully stop the daemon' \
+'status:Show daemon status' \
+'reload:Reload configuration without dropping live endpoints' \
+'logs:Read daemon logs' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
+    _describe -t commands 'wormhole daemon commands' commands "$@"
+}
+(( $+functions[_wormhole__subcmd__daemon__subcmd__help_commands] )) ||
+_wormhole__subcmd__daemon__subcmd__help_commands() {
+    local commands; commands=(
+'run:Run the daemon' \
+'stop:Gracefully stop the daemon' \
+'status:Show daemon status' \
+'reload:Reload configuration without dropping live endpoints' \
+'logs:Read daemon logs' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
+    _describe -t commands 'wormhole daemon help commands' commands "$@"
+}
+(( $+functions[_wormhole__subcmd__daemon__subcmd__help__subcmd__help_commands] )) ||
+_wormhole__subcmd__daemon__subcmd__help__subcmd__help_commands() {
+    local commands; commands=()
+    _describe -t commands 'wormhole daemon help help commands' commands "$@"
+}
+(( $+functions[_wormhole__subcmd__daemon__subcmd__help__subcmd__logs_commands] )) ||
+_wormhole__subcmd__daemon__subcmd__help__subcmd__logs_commands() {
+    local commands; commands=()
+    _describe -t commands 'wormhole daemon help logs commands' commands "$@"
+}
+(( $+functions[_wormhole__subcmd__daemon__subcmd__help__subcmd__reload_commands] )) ||
+_wormhole__subcmd__daemon__subcmd__help__subcmd__reload_commands() {
+    local commands; commands=()
+    _describe -t commands 'wormhole daemon help reload commands' commands "$@"
+}
+(( $+functions[_wormhole__subcmd__daemon__subcmd__help__subcmd__run_commands] )) ||
+_wormhole__subcmd__daemon__subcmd__help__subcmd__run_commands() {
+    local commands; commands=()
+    _describe -t commands 'wormhole daemon help run commands' commands "$@"
+}
+(( $+functions[_wormhole__subcmd__daemon__subcmd__help__subcmd__status_commands] )) ||
+_wormhole__subcmd__daemon__subcmd__help__subcmd__status_commands() {
+    local commands; commands=()
+    _describe -t commands 'wormhole daemon help status commands' commands "$@"
+}
+(( $+functions[_wormhole__subcmd__daemon__subcmd__help__subcmd__stop_commands] )) ||
+_wormhole__subcmd__daemon__subcmd__help__subcmd__stop_commands() {
+    local commands; commands=()
+    _describe -t commands 'wormhole daemon help stop commands' commands "$@"
+}
+(( $+functions[_wormhole__subcmd__daemon__subcmd__logs_commands] )) ||
+_wormhole__subcmd__daemon__subcmd__logs_commands() {
+    local commands; commands=()
+    _describe -t commands 'wormhole daemon logs commands' commands "$@"
+}
+(( $+functions[_wormhole__subcmd__daemon__subcmd__reload_commands] )) ||
+_wormhole__subcmd__daemon__subcmd__reload_commands() {
+    local commands; commands=()
+    _describe -t commands 'wormhole daemon reload commands' commands "$@"
+}
+(( $+functions[_wormhole__subcmd__daemon__subcmd__run_commands] )) ||
+_wormhole__subcmd__daemon__subcmd__run_commands() {
+    local commands; commands=()
+    _describe -t commands 'wormhole daemon run commands' commands "$@"
+}
+(( $+functions[_wormhole__subcmd__daemon__subcmd__status_commands] )) ||
+_wormhole__subcmd__daemon__subcmd__status_commands() {
+    local commands; commands=()
+    _describe -t commands 'wormhole daemon status commands' commands "$@"
+}
+(( $+functions[_wormhole__subcmd__daemon__subcmd__stop_commands] )) ||
+_wormhole__subcmd__daemon__subcmd__stop_commands() {
+    local commands; commands=()
+    _describe -t commands 'wormhole daemon stop commands' commands "$@"
+}
+(( $+functions[_wormhole__subcmd__doctor_commands] )) ||
+_wormhole__subcmd__doctor_commands() {
+    local commands; commands=()
+    _describe -t commands 'wormhole doctor commands' commands "$@"
+}
+(( $+functions[_wormhole__subcmd__down_commands] )) ||
+_wormhole__subcmd__down_commands() {
+    local commands; commands=()
+    _describe -t commands 'wormhole down commands' commands "$@"
+}
+(( $+functions[_wormhole__subcmd__help_commands] )) ||
+_wormhole__subcmd__help_commands() {
+    local commands; commands=(
+'http:Expose a local HTTP service' \
+'tcp:Expose a local TCP service' \
+'run:Run a command and expose its listening port' \
+'up:Start services from wormhole.toml' \
+'down:Stop project services or endpoint identifiers' \
+'ls:List active endpoints' \
+'status:Show daemon status' \
+'inspect:Inspect captured HTTP requests' \
+'replay:Replay one captured request' \
+'interfaces:List discovered interface aliases' \
+'remote:Manage named Wormhole remotes' \
+'key:Manage the client identity key' \
+'doctor:Run structured health checks' \
+'daemon:Manage the per-user daemon' \
+'completions:Generate shell completions' \
+'share:Create an expiring share link' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
+    _describe -t commands 'wormhole help commands' commands "$@"
+}
+(( $+functions[_wormhole__subcmd__help__subcmd__completions_commands] )) ||
+_wormhole__subcmd__help__subcmd__completions_commands() {
+    local commands; commands=()
+    _describe -t commands 'wormhole help completions commands' commands "$@"
+}
+(( $+functions[_wormhole__subcmd__help__subcmd__daemon_commands] )) ||
+_wormhole__subcmd__help__subcmd__daemon_commands() {
+    local commands; commands=(
+'run:Run the daemon' \
+'stop:Gracefully stop the daemon' \
+'status:Show daemon status' \
+'reload:Reload configuration without dropping live endpoints' \
+'logs:Read daemon logs' \
+    )
+    _describe -t commands 'wormhole help daemon commands' commands "$@"
+}
+(( $+functions[_wormhole__subcmd__help__subcmd__daemon__subcmd__logs_commands] )) ||
+_wormhole__subcmd__help__subcmd__daemon__subcmd__logs_commands() {
+    local commands; commands=()
+    _describe -t commands 'wormhole help daemon logs commands' commands "$@"
+}
+(( $+functions[_wormhole__subcmd__help__subcmd__daemon__subcmd__reload_commands] )) ||
+_wormhole__subcmd__help__subcmd__daemon__subcmd__reload_commands() {
+    local commands; commands=()
+    _describe -t commands 'wormhole help daemon reload commands' commands "$@"
+}
+(( $+functions[_wormhole__subcmd__help__subcmd__daemon__subcmd__run_commands] )) ||
+_wormhole__subcmd__help__subcmd__daemon__subcmd__run_commands() {
+    local commands; commands=()
+    _describe -t commands 'wormhole help daemon run commands' commands "$@"
+}
+(( $+functions[_wormhole__subcmd__help__subcmd__daemon__subcmd__status_commands] )) ||
+_wormhole__subcmd__help__subcmd__daemon__subcmd__status_commands() {
+    local commands; commands=()
+    _describe -t commands 'wormhole help daemon status commands' commands "$@"
+}
+(( $+functions[_wormhole__subcmd__help__subcmd__daemon__subcmd__stop_commands] )) ||
+_wormhole__subcmd__help__subcmd__daemon__subcmd__stop_commands() {
+    local commands; commands=()
+    _describe -t commands 'wormhole help daemon stop commands' commands "$@"
+}
+(( $+functions[_wormhole__subcmd__help__subcmd__doctor_commands] )) ||
+_wormhole__subcmd__help__subcmd__doctor_commands() {
+    local commands; commands=()
+    _describe -t commands 'wormhole help doctor commands' commands "$@"
+}
+(( $+functions[_wormhole__subcmd__help__subcmd__down_commands] )) ||
+_wormhole__subcmd__help__subcmd__down_commands() {
+    local commands; commands=()
+    _describe -t commands 'wormhole help down commands' commands "$@"
+}
+(( $+functions[_wormhole__subcmd__help__subcmd__help_commands] )) ||
+_wormhole__subcmd__help__subcmd__help_commands() {
+    local commands; commands=()
+    _describe -t commands 'wormhole help help commands' commands "$@"
+}
+(( $+functions[_wormhole__subcmd__help__subcmd__http_commands] )) ||
+_wormhole__subcmd__help__subcmd__http_commands() {
+    local commands; commands=()
+    _describe -t commands 'wormhole help http commands' commands "$@"
+}
+(( $+functions[_wormhole__subcmd__help__subcmd__inspect_commands] )) ||
+_wormhole__subcmd__help__subcmd__inspect_commands() {
+    local commands; commands=()
+    _describe -t commands 'wormhole help inspect commands' commands "$@"
+}
+(( $+functions[_wormhole__subcmd__help__subcmd__interfaces_commands] )) ||
+_wormhole__subcmd__help__subcmd__interfaces_commands() {
+    local commands; commands=()
+    _describe -t commands 'wormhole help interfaces commands' commands "$@"
+}
+(( $+functions[_wormhole__subcmd__help__subcmd__key_commands] )) ||
+_wormhole__subcmd__help__subcmd__key_commands() {
+    local commands; commands=(
+'show:Show the current public fingerprint' \
+'rotate:Generate a new identity key' \
+    )
+    _describe -t commands 'wormhole help key commands' commands "$@"
+}
+(( $+functions[_wormhole__subcmd__help__subcmd__key__subcmd__rotate_commands] )) ||
+_wormhole__subcmd__help__subcmd__key__subcmd__rotate_commands() {
+    local commands; commands=()
+    _describe -t commands 'wormhole help key rotate commands' commands "$@"
+}
+(( $+functions[_wormhole__subcmd__help__subcmd__key__subcmd__show_commands] )) ||
+_wormhole__subcmd__help__subcmd__key__subcmd__show_commands() {
+    local commands; commands=()
+    _describe -t commands 'wormhole help key show commands' commands "$@"
+}
+(( $+functions[_wormhole__subcmd__help__subcmd__ls_commands] )) ||
+_wormhole__subcmd__help__subcmd__ls_commands() {
+    local commands; commands=()
+    _describe -t commands 'wormhole help ls commands' commands "$@"
+}
+(( $+functions[_wormhole__subcmd__help__subcmd__remote_commands] )) ||
+_wormhole__subcmd__help__subcmd__remote_commands() {
+    local commands; commands=(
+'add:Add or replace a named remote' \
+'ls:List configured remotes' \
+'rm:Remove a named remote' \
+'test:Dial and authenticate to a named remote' \
+    )
+    _describe -t commands 'wormhole help remote commands' commands "$@"
+}
+(( $+functions[_wormhole__subcmd__help__subcmd__remote__subcmd__add_commands] )) ||
+_wormhole__subcmd__help__subcmd__remote__subcmd__add_commands() {
+    local commands; commands=()
+    _describe -t commands 'wormhole help remote add commands' commands "$@"
+}
+(( $+functions[_wormhole__subcmd__help__subcmd__remote__subcmd__ls_commands] )) ||
+_wormhole__subcmd__help__subcmd__remote__subcmd__ls_commands() {
+    local commands; commands=()
+    _describe -t commands 'wormhole help remote ls commands' commands "$@"
+}
+(( $+functions[_wormhole__subcmd__help__subcmd__remote__subcmd__rm_commands] )) ||
+_wormhole__subcmd__help__subcmd__remote__subcmd__rm_commands() {
+    local commands; commands=()
+    _describe -t commands 'wormhole help remote rm commands' commands "$@"
+}
+(( $+functions[_wormhole__subcmd__help__subcmd__remote__subcmd__test_commands] )) ||
+_wormhole__subcmd__help__subcmd__remote__subcmd__test_commands() {
+    local commands; commands=()
+    _describe -t commands 'wormhole help remote test commands' commands "$@"
+}
+(( $+functions[_wormhole__subcmd__help__subcmd__replay_commands] )) ||
+_wormhole__subcmd__help__subcmd__replay_commands() {
+    local commands; commands=()
+    _describe -t commands 'wormhole help replay commands' commands "$@"
+}
+(( $+functions[_wormhole__subcmd__help__subcmd__run_commands] )) ||
+_wormhole__subcmd__help__subcmd__run_commands() {
+    local commands; commands=()
+    _describe -t commands 'wormhole help run commands' commands "$@"
+}
+(( $+functions[_wormhole__subcmd__help__subcmd__share_commands] )) ||
+_wormhole__subcmd__help__subcmd__share_commands() {
+    local commands; commands=()
+    _describe -t commands 'wormhole help share commands' commands "$@"
+}
+(( $+functions[_wormhole__subcmd__help__subcmd__status_commands] )) ||
+_wormhole__subcmd__help__subcmd__status_commands() {
+    local commands; commands=()
+    _describe -t commands 'wormhole help status commands' commands "$@"
+}
+(( $+functions[_wormhole__subcmd__help__subcmd__tcp_commands] )) ||
+_wormhole__subcmd__help__subcmd__tcp_commands() {
+    local commands; commands=()
+    _describe -t commands 'wormhole help tcp commands' commands "$@"
+}
+(( $+functions[_wormhole__subcmd__help__subcmd__up_commands] )) ||
+_wormhole__subcmd__help__subcmd__up_commands() {
+    local commands; commands=()
+    _describe -t commands 'wormhole help up commands' commands "$@"
+}
+(( $+functions[_wormhole__subcmd__http_commands] )) ||
+_wormhole__subcmd__http_commands() {
+    local commands; commands=()
+    _describe -t commands 'wormhole http commands' commands "$@"
+}
+(( $+functions[_wormhole__subcmd__inspect_commands] )) ||
+_wormhole__subcmd__inspect_commands() {
+    local commands; commands=()
+    _describe -t commands 'wormhole inspect commands' commands "$@"
+}
+(( $+functions[_wormhole__subcmd__interfaces_commands] )) ||
+_wormhole__subcmd__interfaces_commands() {
+    local commands; commands=()
+    _describe -t commands 'wormhole interfaces commands' commands "$@"
+}
+(( $+functions[_wormhole__subcmd__key_commands] )) ||
+_wormhole__subcmd__key_commands() {
+    local commands; commands=(
+'show:Show the current public fingerprint' \
+'rotate:Generate a new identity key' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
+    _describe -t commands 'wormhole key commands' commands "$@"
+}
+(( $+functions[_wormhole__subcmd__key__subcmd__help_commands] )) ||
+_wormhole__subcmd__key__subcmd__help_commands() {
+    local commands; commands=(
+'show:Show the current public fingerprint' \
+'rotate:Generate a new identity key' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
+    _describe -t commands 'wormhole key help commands' commands "$@"
+}
+(( $+functions[_wormhole__subcmd__key__subcmd__help__subcmd__help_commands] )) ||
+_wormhole__subcmd__key__subcmd__help__subcmd__help_commands() {
+    local commands; commands=()
+    _describe -t commands 'wormhole key help help commands' commands "$@"
+}
+(( $+functions[_wormhole__subcmd__key__subcmd__help__subcmd__rotate_commands] )) ||
+_wormhole__subcmd__key__subcmd__help__subcmd__rotate_commands() {
+    local commands; commands=()
+    _describe -t commands 'wormhole key help rotate commands' commands "$@"
+}
+(( $+functions[_wormhole__subcmd__key__subcmd__help__subcmd__show_commands] )) ||
+_wormhole__subcmd__key__subcmd__help__subcmd__show_commands() {
+    local commands; commands=()
+    _describe -t commands 'wormhole key help show commands' commands "$@"
+}
+(( $+functions[_wormhole__subcmd__key__subcmd__rotate_commands] )) ||
+_wormhole__subcmd__key__subcmd__rotate_commands() {
+    local commands; commands=()
+    _describe -t commands 'wormhole key rotate commands' commands "$@"
+}
+(( $+functions[_wormhole__subcmd__key__subcmd__show_commands] )) ||
+_wormhole__subcmd__key__subcmd__show_commands() {
+    local commands; commands=()
+    _describe -t commands 'wormhole key show commands' commands "$@"
+}
+(( $+functions[_wormhole__subcmd__ls_commands] )) ||
+_wormhole__subcmd__ls_commands() {
+    local commands; commands=()
+    _describe -t commands 'wormhole ls commands' commands "$@"
+}
+(( $+functions[_wormhole__subcmd__remote_commands] )) ||
+_wormhole__subcmd__remote_commands() {
+    local commands; commands=(
+'add:Add or replace a named remote' \
+'ls:List configured remotes' \
+'rm:Remove a named remote' \
+'test:Dial and authenticate to a named remote' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
+    _describe -t commands 'wormhole remote commands' commands "$@"
+}
+(( $+functions[_wormhole__subcmd__remote__subcmd__add_commands] )) ||
+_wormhole__subcmd__remote__subcmd__add_commands() {
+    local commands; commands=()
+    _describe -t commands 'wormhole remote add commands' commands "$@"
+}
+(( $+functions[_wormhole__subcmd__remote__subcmd__help_commands] )) ||
+_wormhole__subcmd__remote__subcmd__help_commands() {
+    local commands; commands=(
+'add:Add or replace a named remote' \
+'ls:List configured remotes' \
+'rm:Remove a named remote' \
+'test:Dial and authenticate to a named remote' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
+    _describe -t commands 'wormhole remote help commands' commands "$@"
+}
+(( $+functions[_wormhole__subcmd__remote__subcmd__help__subcmd__add_commands] )) ||
+_wormhole__subcmd__remote__subcmd__help__subcmd__add_commands() {
+    local commands; commands=()
+    _describe -t commands 'wormhole remote help add commands' commands "$@"
+}
+(( $+functions[_wormhole__subcmd__remote__subcmd__help__subcmd__help_commands] )) ||
+_wormhole__subcmd__remote__subcmd__help__subcmd__help_commands() {
+    local commands; commands=()
+    _describe -t commands 'wormhole remote help help commands' commands "$@"
+}
+(( $+functions[_wormhole__subcmd__remote__subcmd__help__subcmd__ls_commands] )) ||
+_wormhole__subcmd__remote__subcmd__help__subcmd__ls_commands() {
+    local commands; commands=()
+    _describe -t commands 'wormhole remote help ls commands' commands "$@"
+}
+(( $+functions[_wormhole__subcmd__remote__subcmd__help__subcmd__rm_commands] )) ||
+_wormhole__subcmd__remote__subcmd__help__subcmd__rm_commands() {
+    local commands; commands=()
+    _describe -t commands 'wormhole remote help rm commands' commands "$@"
+}
+(( $+functions[_wormhole__subcmd__remote__subcmd__help__subcmd__test_commands] )) ||
+_wormhole__subcmd__remote__subcmd__help__subcmd__test_commands() {
+    local commands; commands=()
+    _describe -t commands 'wormhole remote help test commands' commands "$@"
+}
+(( $+functions[_wormhole__subcmd__remote__subcmd__ls_commands] )) ||
+_wormhole__subcmd__remote__subcmd__ls_commands() {
+    local commands; commands=()
+    _describe -t commands 'wormhole remote ls commands' commands "$@"
+}
+(( $+functions[_wormhole__subcmd__remote__subcmd__rm_commands] )) ||
+_wormhole__subcmd__remote__subcmd__rm_commands() {
+    local commands; commands=()
+    _describe -t commands 'wormhole remote rm commands' commands "$@"
+}
+(( $+functions[_wormhole__subcmd__remote__subcmd__test_commands] )) ||
+_wormhole__subcmd__remote__subcmd__test_commands() {
+    local commands; commands=()
+    _describe -t commands 'wormhole remote test commands' commands "$@"
+}
+(( $+functions[_wormhole__subcmd__replay_commands] )) ||
+_wormhole__subcmd__replay_commands() {
+    local commands; commands=()
+    _describe -t commands 'wormhole replay commands' commands "$@"
+}
+(( $+functions[_wormhole__subcmd__run_commands] )) ||
+_wormhole__subcmd__run_commands() {
+    local commands; commands=()
+    _describe -t commands 'wormhole run commands' commands "$@"
+}
+(( $+functions[_wormhole__subcmd__share_commands] )) ||
+_wormhole__subcmd__share_commands() {
+    local commands; commands=()
+    _describe -t commands 'wormhole share commands' commands "$@"
+}
+(( $+functions[_wormhole__subcmd__status_commands] )) ||
+_wormhole__subcmd__status_commands() {
+    local commands; commands=()
+    _describe -t commands 'wormhole status commands' commands "$@"
+}
+(( $+functions[_wormhole__subcmd__tcp_commands] )) ||
+_wormhole__subcmd__tcp_commands() {
+    local commands; commands=()
+    _describe -t commands 'wormhole tcp commands' commands "$@"
+}
+(( $+functions[_wormhole__subcmd__up_commands] )) ||
+_wormhole__subcmd__up_commands() {
+    local commands; commands=()
+    _describe -t commands 'wormhole up commands' commands "$@"
+}
+
+if [ "$funcstack[1]" = "_wormhole" ]; then
+    _wormhole "$@"
+else
+    compdef _wormhole wormhole
+fi

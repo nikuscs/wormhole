@@ -41,6 +41,19 @@ impl IdentityStore {
             .map_or_else(|| self.default_path.clone(), |path| self.expand_home(path))
     }
 
+    /// Loads or creates the default identity.
+    pub fn default_identity(&self) -> Result<Identity, IdentityError> {
+        Self::load_or_generate(&self.default_path)
+    }
+
+    /// Replaces the default identity and returns the old and new fingerprints.
+    pub fn rotate_default(&self) -> Result<(String, String), IdentityError> {
+        let old = self.default_identity()?.fingerprint();
+        let identity = Identity::generate();
+        identity.save(&self.default_path)?;
+        Ok((old, identity.fingerprint()))
+    }
+
     /// Returns the default identity path.
     pub fn default_path(&self) -> &Utf8Path {
         &self.default_path

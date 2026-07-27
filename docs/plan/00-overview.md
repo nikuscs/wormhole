@@ -49,7 +49,7 @@ Stages 03 and 04 can run **in parallel** after 02 (different crates, both depend
 |---|---|
 | Binaries | `wormhole` (client CLI + daemon, one binary) and `wormholed` (relay server). `wormholed` is lib+bin so tests embed it and a future combined single binary stays trivial |
 | API self-description | Both local APIs generate OpenAPI via `utoipa`, serve `/v1/openapi.json` + Scalar `/docs` on their unix sockets, and commit the specs under `docs/` with drift-check tests |
-| Transport client↔relay | QUIC via `quinn`, ALPN `wormhole/1`, default **443/udp** (configurable; TCP edge owns 443/tcp separately). WebSocket-over-TLS fallback (stage 08) |
+| Transport client↔relay | QUIC via `quinn`, ALPN `wormhole/2`, default **443/udp** (configurable; TCP edge owns 443/tcp separately). WebSocket-over-TLS fallback (stage 08) |
 | Domains | **Server-decided only.** `wormholed` config lists its domains (wildcard-cert-backed); clients request subdomain labels under them. Clients can never introduce new domains |
 | Daemon | **Headless, both binaries.** Client daemon: local API (UDS + token) + memory-only request capture. Server: local admin API (UDS). A future TUI (`ratatui`, modeled on xai-org/grok-build's separate-TUI-crate split) or web UI is a **separate client** of these APIs — UI code never lives inside daemon or server, and admin APIs are never TCP/public |
 | Auth client↔relay | Ed25519 keypair; server holds authorized public keys; signed-nonce handshake; **zero per-request auth cost** |
@@ -74,7 +74,7 @@ Stages 03 and 04 can run **in parallel** after 02 (different crates, both depend
                        ┌────────────────────────── VPS ──────────────────────────┐
   browser/webhook ──►  │ :443 HTTPS edge (SNI route) ─┐                          │
   tcp client ─────►    │ :10000-20000 TCP forwards ───┤  wormholed               │
-                       │ :443/udp QUIC (ALPN wormhole/1)   ── session registry    │
+                       │ :443/udp QUIC (ALPN wormhole/2)   ── session registry    │
                        │        redb: binds / authorized keys / webhook buffer   │
                        └───────────────▲─────────────────────────────────────────┘
                                        │ 1 QUIC conn, N muxed HTTP/TCP streams

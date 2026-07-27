@@ -40,7 +40,7 @@ pub async fn doctor() -> Vec<DoctorCheck> {
             ];
         }
     };
-    let mut registry = DriverRegistry::new();
+    let registry = DriverRegistry::new();
     registry.register(Arc::new(WormholeDriver::new(
         config.remotes.clone(),
         config.default_remote.clone(),

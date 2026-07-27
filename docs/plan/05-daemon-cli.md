@@ -138,13 +138,13 @@ proto = "tcp"
 
 ## Tasks
 
-- [ ] **D1 — clap tree + config wiring.** Derive-based command tree exactly as above (stub
+- [x] **D1 — clap tree + config wiring.** Derive-based command tree exactly as above (stub
   stage-07 commands with a "not yet implemented" error via a dedicated `Unimplemented` error —
   remember `todo!()` is denied). Global flags `--json`, `--config`, `-q/-v`. `tracing` to stderr
   only (`RUST_LOG`/`-v`), never stdout (stdout is data).
   Validation: `wormhole --help` snapshot test (insta); every subcommand `--help` renders.
 
-- [ ] **D2 — Daemon runtime.** `daemon.rs`: build `DriverRegistry` (wormhole driver now; 06 adds
+- [x] **D2 — Daemon runtime.** `daemon.rs`: build `DriverRegistry` (wormhole driver now; 06 adds
   more behind the same constructor), `TunnelManager`, axum-over-UDS server
   (`axum::serve(UnixListener...)`) with the bearer-token middleware, lock/socket hygiene per
   the process-model section, versioned state persistence + restore (same backup/temp/fsync/
@@ -155,7 +155,7 @@ proto = "tcp"
   Validation: `wormhole daemon run` in foreground serves `GET /v1/status` (with token; 401
   without); kill -TERM exits cleanly; second `daemon run` refuses (lock held).
 
-- [ ] **D3 — Auto-spawn client.** `client.rs`: `DaemonClient::ensure() -> Self` implementing the
+- [x] **D3 — Auto-spawn client.** `client.rs`: `DaemonClient::ensure() -> Self` implementing the
   connect-or-spawn dance + typed methods per API route (reqwest is HTTP-over-TCP-oriented; use
   hyper-util client over UnixStream, or `reqwest` with its unix-socket support if available —
   check; otherwise a 60-line hyper client is fine).
@@ -163,7 +163,7 @@ proto = "tcp"
   tempdir, `wormhole status` auto-spawns daemon (assert_cmd), second call reuses it (same pid in
   status output), `wormhole daemon stop` ends it.
 
-- [ ] **D4 — Tunnel commands.** `http`/`tcp`/`ls`/`down`/`status` against the client. `http 3000`
+- [x] **D4 — Tunnel commands.** `http`/`tcp`/`ls`/`down`/`status` against the client. `http 3000`
   default endpoint set → POST /v1/services → print urls (or JSON). `--foreground`: build
   manager in-process, print urls, wait for Ctrl-C. Partial failures → exit 6 with per-endpoint
   status. `ls --watch`: re-render on `subscribe()` events via long-poll `GET /v1/services?watch=1`
@@ -171,7 +171,7 @@ proto = "tcp"
   Validation: e2e-lite test with mock driver registered in daemon under a hidden
   `WORMHOLE_ENABLE_MOCK_DRIVER=1` env (test-only escape hatch, documented in AGENTS.md).
 
-- [ ] **D5 — `wormhole run`** (the portless steal). Use a stable local indirection listener so
+- [x] **D5 — `wormhole run`** (the portless steal). Use a stable local indirection listener so
   discovering a different child port never changes any public provider URL. Flow:
   1. `--app-port` given → skip alloc, just wrap + expose.
   2. Allocate `app_port` in 4000–4999 and a separate loopback `proxy_port`; expose providers to
@@ -189,7 +189,7 @@ proto = "tcp"
   Validation: integration test wrapping `python3 -m http.server` (ignores PORT env → exercises
   detection fallback) and a tiny script that honors `$PORT` (happy path).
 
-- [ ] **D6 — `wormhole up`/`down` + project config.** Parse `wormhole.toml` (serde structs shared
+- [x] **D6 — `wormhole up`/`down` + project config.** Parse `wormhole.toml` (serde structs shared
   with C1 merge), `up` = expose all (or named) services, `down` = close this project's services
   by an exact `ProjectId` (hash of canonical worktree root, stored with desired state — never a
   name-prefix match). Humantime parsing for `ttl`, byte-size parsing for `max_body`
@@ -197,20 +197,20 @@ proto = "tcp"
   Validation: unit tests for parse + name/branch inference (fake git dir in tempdir);
   integration: up/ls/down round-trip with mock driver.
 
-- [ ] **D7 — remotes/key/doctor/interfaces/completions.** Straight mapping onto core (C2/C3/C7)
+- [x] **D7 — remotes/key/doctor/interfaces/completions.** Straight mapping onto core (C2/C3/C7)
   + `clap_complete` for `completions`. `remote test` = QUIC dial + full handshake, report
   latency. `key rotate`: generate new identity, print both fingerprints and a reminder to
   re-authorize on servers (do NOT auto-revoke anywhere).
   Validation: `wormhole interfaces --json` lists `localhost`; completions generate for
   zsh/bash/fish without panic (snapshot the zsh one).
 
-- [ ] **D8 — Docs for agents.** `docs/local-api.md` (full route reference with curl examples
+- [x] **D8 — Docs for agents.** `docs/local-api.md` (full route reference with curl examples
   incl. `curl --unix-socket`), `docs/agents.md`: recipes — "expose current worktree on 3 URLs",
   "wrap a dev server", "poll requests as JSON", each as copy-pasteable commands with expected
   JSON shapes.
   Validation: every documented command exists in `--help` output (grep script or by hand).
 
-- [ ] **D9 — CLI polish (humans get pretty, agents get plain).** All through `output.rs`:
+- [x] **D9 — CLI polish (humans get pretty, agents get plain).** All through `output.rs`:
   colors via `owo-colors`, spinners/progress via `indicatif` (waiting for endpoints to become
   Ready), status glyphs (`✓` online, `✗` error, `↻` reconnecting, `⏸` offline, `🌀` for the
   wormhole banner line) and colorized URLs in `ls`/`up`/`http` output. Rules: auto-disable all

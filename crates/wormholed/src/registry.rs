@@ -166,6 +166,11 @@ impl Registry {
         self.remove(bind, true)
     }
 
+    /// Resolves a durable reservation to its bind identifier.
+    pub fn bind_for_reservation(&self, reservation: Uuid) -> Option<Uuid> {
+        self.reservations.get(&reservation).map(|entry| *entry.value())
+    }
+
     /// Removes a route; persistent reservations survive unless `forget` is true.
     pub fn remove(&self, bind: Uuid, forget: bool) -> Result<(), RegistryError> {
         let key = self.bind_keys.remove(&bind).ok_or(RegistryError::UnknownBind(bind))?.1;

@@ -10,9 +10,16 @@ use crate::error::PortError;
 
 /// Returns the first currently bindable loopback port in a range.
 pub fn alloc_port(range: RangeInclusive<u16>) -> Result<u16, PortError> {
+    let (port, listener) = reserve_port(range)?;
+    drop(listener);
+    Ok(port)
+}
+
+/// Reserves the first bindable loopback port until the caller is ready to spawn its listener.
+pub fn reserve_port(range: RangeInclusive<u16>) -> Result<(u16, std::net::TcpListener), PortError> {
     for port in range {
-        if std::net::TcpListener::bind(("127.0.0.1", port)).is_ok() {
-            return Ok(port);
+        if let Ok(listener) = std::net::TcpListener::bind(("127.0.0.1", port)) {
+            return Ok((port, listener));
         }
     }
     Err(PortError::Exhausted)

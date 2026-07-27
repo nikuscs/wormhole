@@ -25,6 +25,7 @@ pub struct EndpointHandle {
     pub target: ResolvedTarget,
     pub semaphore: Arc<Semaphore>,
     pub stop: CancellationToken,
+    pub forget: watch::Receiver<bool>,
     pub events: mpsc::Sender<DriverEvent>,
     pub inspect: bool,
 }
@@ -71,6 +72,7 @@ impl RemoteConn {
         target: ResolvedTarget,
         events: mpsc::Sender<DriverEvent>,
         stop: CancellationToken,
+        forget: watch::Receiver<bool>,
     ) -> Result<BindLease, DriverError> {
         let (reply, response) = oneshot::channel();
         self.commands
@@ -79,6 +81,7 @@ impl RemoteConn {
                 target,
                 events,
                 stop: stop.clone(),
+                forget,
                 reply,
             })
             .await
@@ -91,8 +94,28 @@ impl RemoteConn {
         }
     }
 
-    pub async fn unbind(&self, bind: Uuid, forget: bool) {
-        let _sent = self.commands.send(ConnCommand::Unbind { bind, forget }).await;
+    pub async fn unbind(&self, bind: Uuid, forget: bool) -> Result<(), DriverError> {
+        let (reply, response) = oneshot::channel();
+        self.commands
+            .send(ConnCommand::Unbind { bind, forget, reply })
+            .await
+            .map_err(|_| DriverError::Transport("remote connection closed".to_owned()))?;
+        tokio::time::timeout(Duration::from_secs(5), response)
+            .await
+            .map_err(|_| DriverError::Transport("unbind acknowledgement timed out".to_owned()))?
+            .map_err(|_| DriverError::Transport("remote connection closed".to_owned()))
+    }
+
+    pub async fn forget_reservation(&self, reservation: Uuid) -> Result<(), DriverError> {
+        let (reply, response) = oneshot::channel();
+        self.commands
+            .send(ConnCommand::ForgetReservation { reservation, reply })
+            .await
+            .map_err(|_| DriverError::Transport("remote connection closed".to_owned()))?;
+        tokio::time::timeout(Duration::from_secs(5), response)
+            .await
+            .map_err(|_| DriverError::Transport("forget acknowledgement timed out".to_owned()))?
+            .map_err(|_| DriverError::Transport("remote connection closed".to_owned()))
     }
 
     pub async fn shutdown(&self) {
@@ -106,11 +129,17 @@ enum ConnCommand {
         target: ResolvedTarget,
         events: mpsc::Sender<DriverEvent>,
         stop: CancellationToken,
+        forget: watch::Receiver<bool>,
         reply: oneshot::Sender<Result<BindLease, DriverError>>,
     },
     Unbind {
         bind: Uuid,
         forget: bool,
+        reply: oneshot::Sender<()>,
+    },
+    ForgetReservation {
+        reservation: Uuid,
+        reply: oneshot::Sender<()>,
     },
     ShutdownIfIdle,
     Shutdown,
@@ -169,6 +198,8 @@ async fn control_loop(
 ) -> Result<(), DriverError> {
     let mut pending = HashMap::<Uuid, PendingBind>::new();
     let mut activating = HashMap::<Uuid, ActivatingBind>::new();
+    let mut unbinding = HashMap::<Uuid, oneshot::Sender<()>>::new();
+    let mut forgetting = HashMap::<Uuid, oneshot::Sender<()>>::new();
     let mut keepalive = tokio::time::interval(Duration::from_secs(20));
     keepalive.tick().await;
     let mut ping_seq = 0_u64;
@@ -178,14 +209,15 @@ async fn control_loop(
             frame = channel.recv() => {
                 let frame = frame.map_err(|error| DriverError::Protocol(error.to_string()))?;
                 handle_frame(
-                    channel, frame, binds, &mut pending, &mut activating, closed.clone(),
-                    &mut missed_pongs,
+                    channel, frame, binds, &mut pending, &mut activating, &mut unbinding,
+                    &mut forgetting, closed.clone(), &mut missed_pongs,
                 ).await?;
             }
             command = commands.recv() => {
                 let Some(command) = command else { return Ok(()) };
                 if handle_command(
-                    channel, command, command_tx, binds, &mut pending, Arc::clone(&stream_slots),
+                    channel, command, command_tx, binds, &mut pending, &mut unbinding,
+                    &mut forgetting, Arc::clone(&stream_slots),
                 ).await? {
                     return Ok(());
                 }
@@ -203,16 +235,19 @@ async fn control_loop(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn handle_command(
     channel: &mut ControlChannel<QuicIo>,
     command: ConnCommand,
     command_tx: &mpsc::Sender<ConnCommand>,
     binds: &DashMap<Uuid, Arc<EndpointHandle>>,
     pending: &mut HashMap<Uuid, PendingBind>,
+    unbinding: &mut HashMap<Uuid, oneshot::Sender<()>>,
+    forgetting: &mut HashMap<Uuid, oneshot::Sender<()>>,
     stream_slots: Arc<Semaphore>,
 ) -> Result<bool, DriverError> {
     match command {
-        ConnCommand::Bind { spec, target, events, stop, reply } => {
+        ConnCommand::Bind { spec, target, events, stop, forget, reply } => {
             let request = Uuid::now_v7();
             let reservation = spec.reservation;
             let forget_on_cancel = should_forget_cancelled(reservation);
@@ -221,6 +256,7 @@ async fn handle_command(
                 target,
                 semaphore: stream_slots,
                 stop,
+                forget,
                 events,
                 inspect: spec.inspect,
             });
@@ -230,8 +266,9 @@ async fn handle_command(
                 .await
                 .map_err(|error| DriverError::Protocol(error.to_string()))?;
         }
-        ConnCommand::Unbind { bind, forget } => {
+        ConnCommand::Unbind { bind, forget, reply } => {
             binds.remove(&bind);
+            unbinding.insert(bind, reply);
             channel
                 .send(&ControlFrame::Unbind { bind, forget })
                 .await
@@ -244,18 +281,28 @@ async fn handle_command(
                 });
             }
         }
+        ConnCommand::ForgetReservation { reservation, reply } => {
+            forgetting.insert(reservation, reply);
+            channel
+                .send(&ControlFrame::ForgetReservation { reservation })
+                .await
+                .map_err(|error| DriverError::Protocol(error.to_string()))?;
+        }
         ConnCommand::ShutdownIfIdle => return Ok(binds.is_empty()),
         ConnCommand::Shutdown => return Ok(true),
     }
     Ok(false)
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn handle_frame(
     channel: &mut ControlChannel<QuicIo>,
     frame: ControlFrame,
     binds: &DashMap<Uuid, Arc<EndpointHandle>>,
     pending: &mut HashMap<Uuid, PendingBind>,
     activating: &mut HashMap<Uuid, ActivatingBind>,
+    unbinding: &mut HashMap<Uuid, oneshot::Sender<()>>,
+    forgetting: &mut HashMap<Uuid, oneshot::Sender<()>>,
     closed: watch::Receiver<bool>,
     missed_pongs: &mut u8,
 ) -> Result<(), DriverError> {
@@ -266,6 +313,16 @@ async fn handle_frame(
         }
         ControlFrame::BindActive { bind } => {
             handle_active(channel, bind, binds, activating, closed).await?;
+        }
+        ControlFrame::Unbound { bind } => {
+            if let Some(reply) = unbinding.remove(&bind) {
+                let _sent = reply.send(());
+            }
+        }
+        ControlFrame::ForgotReservation { reservation } => {
+            if let Some(reply) = forgetting.remove(&reservation) {
+                let _sent = reply.send(());
+            }
         }
         ControlFrame::BindError { request, reason } => {
             if let Some(pending) = pending.remove(&request) {
@@ -304,8 +361,10 @@ async fn handle_bound(
         .remove(&request)
         .ok_or_else(|| DriverError::Protocol(format!("Bound has unknown request id: {request}")))?;
     if pending.handle.stop.is_cancelled() {
+        let requested = *pending.handle.forget.borrow();
+        let forget = should_forget_bind(pending.forget_on_cancel, requested);
         channel
-            .send(&ControlFrame::Unbind { bind, forget: pending.forget_on_cancel })
+            .send(&ControlFrame::Unbind { bind, forget })
             .await
             .map_err(|error| DriverError::Protocol(error.to_string()))?;
         let _sent = pending.reply.send(Err(DriverError::Cancelled));
@@ -380,9 +439,13 @@ async fn cancel_active(
     binds: &DashMap<Uuid, Arc<EndpointHandle>>,
     active: ActivatingBind,
 ) -> Result<(), DriverError> {
+    let forget = should_forget_bind(
+        active.forget_on_cancel,
+        binds.get(&bind).is_some_and(|handle| *handle.forget.borrow()),
+    );
     binds.remove(&bind);
     channel
-        .send(&ControlFrame::Unbind { bind, forget: active.forget_on_cancel })
+        .send(&ControlFrame::Unbind { bind, forget })
         .await
         .map_err(|error| DriverError::Protocol(error.to_string()))?;
     let _sent = active.reply.send(Err(DriverError::Cancelled));
@@ -391,6 +454,10 @@ async fn cancel_active(
 
 const fn should_forget_cancelled(reservation: Option<Uuid>) -> bool {
     reservation.is_none()
+}
+
+const fn should_forget_bind(default: bool, requested: bool) -> bool {
+    default || requested
 }
 
 fn bind_spec(spec: &EndpointSpec) -> BindSpec {

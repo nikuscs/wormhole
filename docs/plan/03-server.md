@@ -122,7 +122,7 @@ the numbering groups by topic, not by execution order.
   `ServerHandshake` takes. Validation: unit tests incl. revoked key.
 
 - [x] **S4 — QUIC listener + session actor** (`quic.rs`, `session.rs`).
-  - quinn `Endpoint` with rustls `ServerConfig` from `CertManager` (S6), ALPN `wormhole/1`,
+  - quinn `Endpoint` with rustls `ServerConfig` from `CertManager` (S6), ALPN `wormhole/2`,
     transport: keep-alive 15s, idle timeout 60s. **Startup order:** CertManager must have the
     default domain's cert ready (loaded or issued) **before** the QUIC socket binds — in
     acme-dns01 mode with an empty cache, `serve` blocks on first issuance and fails loudly on

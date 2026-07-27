@@ -4,26 +4,41 @@ use std::net::SocketAddr;
 
 use camino::Utf8PathBuf;
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
 use crate::error::ConfigError;
 
 /// One named Wormhole relay.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct Remote {
     /// UDP authority of the relay.
     pub addr: String,
     /// TLS and handshake-bound server name.
     pub server_name: String,
     /// Optional exclusive development CA root.
+    #[schema(value_type = Option<String>)]
     pub trusted_ca: Option<Utf8PathBuf>,
     /// Optional per-remote identity override.
+    #[schema(value_type = Option<String>)]
     pub identity: Option<Utf8PathBuf>,
     /// Unknown forward-compatible settings.
     #[serde(default, flatten)]
+    #[schema(ignore)]
     pub(crate) extra: std::collections::BTreeMap<String, toml::Value>,
 }
 
 impl Remote {
+    /// Creates a named-remote value for configuration editors.
+    pub const fn new(addr: String, server_name: String, identity: Option<Utf8PathBuf>) -> Self {
+        Self {
+            addr,
+            server_name,
+            trusted_ca: None,
+            identity,
+            extra: std::collections::BTreeMap::new(),
+        }
+    }
+
     /// Resolves the configured UDP authority.
     pub async fn resolve_addr(&self) -> Result<SocketAddr, ConfigError> {
         tokio::net::lookup_host(&self.addr)

@@ -1,14 +1,15 @@
-//! Serializable control frames and data-stream headers for protocol version 1.
+//! Serializable control frames and data-stream headers for protocol version 2.
 
 use std::net::SocketAddr;
 
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 use uuid::Uuid;
 
 /// Exact protocol version carried in the handshake.
-pub const PROTO_VERSION: u16 = 1;
-/// ALPN identifier for the version 1 wire contract.
-pub const ALPN: &[u8] = b"wormhole/1";
+pub const PROTO_VERSION: u16 = 2;
+/// ALPN identifier for the version 2 wire contract.
+pub const ALPN: &[u8] = b"wormhole/2";
 
 /// Frames exchanged over the long-lived control stream.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -28,6 +29,12 @@ pub enum ControlFrame {
     Bind { request: Uuid, spec: BindSpec, reservation: Option<Uuid> },
     /// Removes a bind and optionally its persistent reservation.
     Unbind { bind: Uuid, forget: bool },
+    /// Confirms that a bind was removed durably.
+    Unbound { bind: Uuid },
+    /// Idempotently removes a persistent reservation.
+    ForgetReservation { reservation: Uuid },
+    /// Confirms that a reservation is absent.
+    ForgotReservation { reservation: Uuid },
     /// Confirms that the client installed local routing for a bind.
     BindReady { bind: Uuid },
     /// Reports a successful server-side bind reservation.
@@ -78,7 +85,7 @@ pub enum BindSpec {
 }
 
 /// Access-control material enforced at a public HTTP edge.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct EdgeAuth {
     /// Basic-auth credential in `user:password` form.
     pub basic: Option<String>,
@@ -89,7 +96,7 @@ pub struct EdgeAuth {
 }
 
 /// Lifetime of a bind reservation.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum Persistence {
     /// Exists only while the client session is connected.
@@ -99,7 +106,7 @@ pub enum Persistence {
 }
 
 /// Limits applied to offline webhook buffering.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct BufferPolicy {
     /// Maximum buffered request count.
     pub max_requests: u32,

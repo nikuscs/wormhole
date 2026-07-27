@@ -84,4 +84,7 @@ pub enum ManagerError {
     /// Endpoint identifier is unknown.
     #[error("unknown endpoint: {0}")]
     UnknownEndpoint(uuid::Uuid),
+    /// Endpoint cleanup could not be confirmed.
+    #[error("endpoint cleanup failed: {0}")]
+    Cleanup(String),
 }

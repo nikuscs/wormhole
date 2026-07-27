@@ -47,7 +47,7 @@ async fn doctor_reports_each_mock_driver_health() {
     let remote: crate::remotes::Remote =
         toml::from_str("addr = \"localhost:443\"\nserver_name = \"localhost\"").expect("remote");
     identities.resolve_identity(&remote).expect("identity");
-    let mut registry = DriverRegistry::new();
+    let registry = DriverRegistry::new();
     registry.register(Arc::new(HealthDriver { name: "healthy", health: DriverHealth::Healthy }));
     registry.register(Arc::new(HealthDriver {
         name: "missing",

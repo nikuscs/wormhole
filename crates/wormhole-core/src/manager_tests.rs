@@ -71,7 +71,7 @@ fn spec(host: &str) -> EndpointSpec {
 }
 
 fn manager() -> TunnelManager {
-    let mut registry = DriverRegistry::new();
+    let registry = DriverRegistry::new();
     registry.register(Arc::new(MockDriver));
     TunnelManager::new(Arc::new(registry), ClientConfig::default())
 }

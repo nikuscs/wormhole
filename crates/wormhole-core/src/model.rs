@@ -4,11 +4,12 @@ use std::net::SocketAddr;
 
 use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 use uuid::Uuid;
 use wormhole_proto::frames::{BufferPolicy, EdgeAuth, Persistence};
 
 /// Protocol spoken by a local service.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ServiceProto {
     /// HTTP reverse proxying.
@@ -18,11 +19,12 @@ pub enum ServiceProto {
 }
 
 /// A local thing to expose.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct Service {
     /// Stable local service name.
     pub name: String,
     /// Unresolved local destination.
+    #[schema(value_type = TargetSchema)]
     pub target: Target,
     /// Local delivery protocol.
     pub proto: ServiceProto,
@@ -40,12 +42,75 @@ pub enum Target {
     Iface { alias: String, port: u16 },
 }
 
+/// Schema-only representation of the tagged target wire contract.
+#[doc(hidden)]
+#[derive(ToSchema)]
+#[serde(untagged)]
+pub enum TargetSchema {
+    Port(PortTargetSchema),
+    HostPort(HostPortTargetSchema),
+    Iface(IfaceTargetSchema),
+}
+
+#[doc(hidden)]
+#[derive(ToSchema)]
+pub struct PortTargetSchema {
+    pub kind: PortTargetKind,
+    pub value: u16,
+}
+
+#[doc(hidden)]
+#[derive(ToSchema)]
+pub struct HostPortTargetSchema {
+    pub kind: HostPortTargetKind,
+    pub value: HostPortValueSchema,
+}
+
+#[doc(hidden)]
+#[derive(ToSchema)]
+pub struct HostPortValueSchema(pub String, pub u16);
+
+#[doc(hidden)]
+#[derive(ToSchema)]
+pub struct IfaceTargetSchema {
+    pub kind: IfaceTargetKind,
+    pub value: IfaceTargetValueSchema,
+}
+
+#[doc(hidden)]
+#[derive(ToSchema)]
+pub struct IfaceTargetValueSchema {
+    pub alias: String,
+    pub port: u16,
+}
+
+#[doc(hidden)]
+#[derive(ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum PortTargetKind {
+    Port,
+}
+
+#[doc(hidden)]
+#[derive(ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum HostPortTargetKind {
+    HostPort,
+}
+
+#[doc(hidden)]
+#[derive(ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum IfaceTargetKind {
+    Iface,
+}
+
 /// Resolved socket destination supplied to drivers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ResolvedTarget(pub SocketAddr);
 
 /// Local HTTP delivery retry policy reserved for Stage 07 behavior.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct RetryPolicy {
     /// Maximum delivery attempts.
     pub max_attempts: u32,
@@ -54,7 +119,7 @@ pub struct RetryPolicy {
 }
 
 /// One desired public exposure through one driver instance.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct EndpointSpec {
     /// Public protocol, overwritten from the service by the manager.
     pub proto: ServiceProto,
@@ -86,7 +151,7 @@ pub struct EndpointSpec {
 }
 
 /// Current endpoint lifecycle status.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum EndpointStatus {
     /// Public routing is ready.
@@ -100,7 +165,7 @@ pub enum EndpointStatus {
 }
 
 /// A live or recently stopped exposure.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct ActiveEndpoint {
     /// Manager-local endpoint identifier.
     pub id: Uuid,
@@ -113,11 +178,12 @@ pub struct ActiveEndpoint {
     /// Current lifecycle status.
     pub status: EndpointStatus,
     /// Time this status record was created.
+    #[schema(value_type = String, format = DateTime)]
     pub since: Timestamp,
 }
 
 /// Captured HTTP request metadata reserved for Stage 07 inspection.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct CapturedRequest {
     /// Endpoint bind identifier.
     pub bind_id: Uuid,
@@ -126,6 +192,7 @@ pub struct CapturedRequest {
     /// Request target.
     pub uri: String,
     /// Capture timestamp.
+    #[schema(value_type = String, format = DateTime)]
     pub captured_at: Timestamp,
 }
 
@@ -139,7 +206,7 @@ pub struct StatusChange {
 }
 
 /// Structured diagnostic result rendered by Stage 05.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct DoctorCheck {
     /// Check name.
     pub name: String,

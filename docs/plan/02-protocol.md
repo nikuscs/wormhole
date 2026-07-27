@@ -9,7 +9,7 @@ protocol unit-testable and keeps client/server from drifting.
 
 ## Design (normative)
 
-- One QUIC connection per (client, remote). ALPN `wormhole/1`. The **first** bidirectional stream
+- One QUIC connection per (client, remote). ALPN `wormhole/2`. The **first** bidirectional stream
   opened by the client is the **control stream**; it stays open for the connection's life.
 - Control stream framing: 4-byte big-endian length prefix + JSON body
   (`LengthDelimitedCodec::builder().max_frame_length(1024 * 1024)`). JSON chosen deliberately:
@@ -30,8 +30,8 @@ protocol unit-testable and keeps client/server from drifting.
   `"wormhole-v1-challenge" || u32_le(nonce.len) || nonce || u32_le(server_utf8.len) ||
   server_utf8 || u16_le(proto_version)`. All protocol base64 is canonical RFC 4648 Standard with
   required `=` padding; decoders reject unpadded and otherwise non-canonical forms.
-- Versioning: `PROTO_VERSION: u16 = 1` inside `Hello`; peers require an exact match within ALPN
-  `wormhole/1`. A wire-incompatible version gets a new ALPN. Unknown JSON fields are ignored
+- Versioning: `PROTO_VERSION: u16 = 2` inside `Hello`; peers require an exact match within ALPN
+  `wormhole/2`. A wire-incompatible version gets a new ALPN. Unknown JSON fields are ignored
   (`serde(default)` + no `deny_unknown_fields`) for additive changes within v1.
 
 ## Module layout
@@ -51,8 +51,8 @@ crates/wormhole-proto/src/
 - [x] **P1 — Frame types** (`frames.rs`). Serde enums, internally tagged:
 
   ```rust
-  pub const PROTO_VERSION: u16 = 1;
-  pub const ALPN: &[u8] = b"wormhole/1";
+  pub const PROTO_VERSION: u16 = 2;
+  pub const ALPN: &[u8] = b"wormhole/2";
 
   #[derive(Debug, Clone, Serialize, Deserialize)]
   #[serde(tag = "t", rename_all = "snake_case")]

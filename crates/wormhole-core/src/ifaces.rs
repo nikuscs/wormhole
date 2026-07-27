@@ -9,13 +9,14 @@ use std::{
 use crate::error::IfaceError;
 
 /// One discovered alias mapping.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
 pub struct IfaceAlias {
     /// Stable alias used in configuration.
     pub alias: String,
     /// Operating-system interface name.
     pub iface: String,
     /// Selected interface address.
+    #[schema(value_type = String)]
     pub ip: IpAddr,
 }
 

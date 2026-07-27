@@ -3,7 +3,7 @@
 use std::{collections::HashMap, sync::Arc};
 
 use async_trait::async_trait;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, watch};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
@@ -127,12 +127,24 @@ pub trait TunnelDriver: Send + Sync {
         events: mpsc::Sender<DriverEvent>,
         stop: CancellationToken,
     ) -> Result<(), DriverError>;
+
+    /// Runs with a manager-owned flag that requests reservation deletion on close.
+    async fn run_controlled(
+        &self,
+        spec: EndpointSpec,
+        target: ResolvedTarget,
+        events: mpsc::Sender<DriverEvent>,
+        stop: CancellationToken,
+        _forget: watch::Receiver<bool>,
+    ) -> Result<(), DriverError> {
+        self.run(spec, target, events, stop).await
+    }
 }
 
 /// Registry built once from configured driver instances.
 #[derive(Default)]
 pub struct DriverRegistry {
-    map: HashMap<&'static str, Arc<dyn TunnelDriver>>,
+    map: parking_lot::RwLock<HashMap<&'static str, Arc<dyn TunnelDriver>>>,
 }
 
 impl DriverRegistry {
@@ -142,18 +154,18 @@ impl DriverRegistry {
     }
 
     /// Registers or replaces a driver by its stable name.
-    pub fn register(&mut self, driver: Arc<dyn TunnelDriver>) {
-        self.map.insert(driver.name(), driver);
+    pub fn register(&self, driver: Arc<dyn TunnelDriver>) {
+        self.map.write().insert(driver.name(), driver);
     }
 
     /// Looks up a driver.
     pub fn get(&self, name: &str) -> Option<Arc<dyn TunnelDriver>> {
-        self.map.get(name).cloned()
+        self.map.read().get(name).cloned()
     }
 
     /// Returns all drivers in stable name order.
     pub fn all(&self) -> Vec<Arc<dyn TunnelDriver>> {
-        let mut drivers = self.map.values().cloned().collect::<Vec<_>>();
+        let mut drivers = self.map.read().values().cloned().collect::<Vec<_>>();
         drivers.sort_by_key(|driver| driver.name());
         drivers
     }

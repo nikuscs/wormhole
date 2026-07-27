@@ -37,7 +37,10 @@ may proceed in parallel after Stage 02.
   Never add inline `mod tests { ... }` blocks.
 - Source files have a 400-line soft cap and 500-line hard cap; `*_tests.rs` files cap at 800 lines.
 - Functions cap at 80 lines and cognitive complexity 20. Split by responsibility before limits.
-- Test-only escape hatches must be absent from release builds.
+- Test-only escape hatches must be absent from release builds. The CLI's
+  `WORMHOLE_ENABLE_MOCK_DRIVER=1` integration-test driver and the
+  `WORMHOLE_RUN_{LISTEN,DETECT}_TIMEOUT_MS` test timeouts are compiled only with
+  `debug_assertions` and are absent from release binaries.
 
 ## Required checks
 

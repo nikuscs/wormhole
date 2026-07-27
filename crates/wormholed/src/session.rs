@@ -155,7 +155,10 @@ impl<S: AsyncRead + AsyncWrite + Unpin> SessionActor<S> {
                 self.channel.send(&ControlFrame::BindActive { bind }).await?;
                 Ok(())
             }
-            ControlFrame::Unbind { bind, forget } => self.handle_unbind(bind, forget),
+            ControlFrame::Unbind { bind, forget } => self.handle_unbind(bind, forget).await,
+            ControlFrame::ForgetReservation { reservation } => {
+                self.handle_forget_reservation(reservation).await
+            }
             ControlFrame::Ping { seq } => {
                 self.channel.send(&ControlFrame::Pong { seq }).await?;
                 Ok(())
@@ -264,7 +267,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> SessionActor<S> {
         Ok(())
     }
 
-    fn handle_unbind(&mut self, bind: Uuid, forget: bool) -> Result<(), SessionError> {
+    async fn handle_unbind(&mut self, bind: Uuid, forget: bool) -> Result<(), SessionError> {
         let persist = self.binds.remove(&bind).ok_or(RegistryError::UnknownBind(bind))?;
         let tcp_port = self.tcp_port(bind);
         match (persist, forget) {
@@ -285,6 +288,26 @@ impl<S: AsyncRead + AsyncWrite + Unpin> SessionActor<S> {
                 self.state.remove_bind(&self.fingerprint);
             }
         }
+        self.channel.send(&ControlFrame::Unbound { bind }).await?;
+        Ok(())
+    }
+
+    async fn handle_forget_reservation(&mut self, reservation: Uuid) -> Result<(), SessionError> {
+        if let Some(bind) = self.state.registry.bind_for_reservation(reservation) {
+            let handle =
+                self.state.registry.get_bind(bind).ok_or(RegistryError::UnknownBind(bind))?;
+            if handle.key_fpr != self.fingerprint {
+                return Err(RegistryError::ReservationOwnerMismatch.into());
+            }
+            if let Some(port) = self.tcp_port(bind) {
+                self.state.tcp_edges.remove_listener(port);
+            }
+            self.binds.remove(&bind);
+            self.state.registry.remove(bind, true)?;
+            self.state.database.delete_bind(bind)?;
+            self.state.remove_bind(&self.fingerprint);
+        }
+        self.channel.send(&ControlFrame::ForgotReservation { reservation }).await?;
         Ok(())
     }
 

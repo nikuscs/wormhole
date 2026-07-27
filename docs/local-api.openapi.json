@@ -1,0 +1,1106 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "wormhole-cli",
+    "description": "",
+    "license": {
+      "name": "MIT",
+      "identifier": "MIT"
+    },
+    "version": "0.0.0"
+  },
+  "paths": {
+    "/v1/doctor": {
+      "get": {
+        "tags": [],
+        "operationId": "doctor",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/DoctorCheck"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/endpoints": {
+      "get": {
+        "tags": [],
+        "operationId": "endpoints",
+        "parameters": [
+          {
+            "name": "service",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ActiveEndpoint"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/endpoints/{id}": {
+      "delete": {
+        "tags": [],
+        "operationId": "delete_endpoint",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "forget",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClosedResponse"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/interfaces": {
+      "get": {
+        "tags": [],
+        "operationId": "interfaces",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/IfaceAlias"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/openapi.json": {
+      "get": {
+        "tags": [],
+        "operationId": "openapi_json",
+        "responses": {
+          "200": {
+            "description": "OpenAPI"
+          }
+        }
+      }
+    },
+    "/v1/reload": {
+      "post": {
+        "tags": [],
+        "operationId": "reload",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClosedResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/requests": {
+      "get": {
+        "tags": [
+          "crate::future_api"
+        ],
+        "operationId": "requests",
+        "parameters": [
+          {
+            "name": "endpoint",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "since",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Captures"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "crate::future_api"
+        ],
+        "operationId": "clear_requests",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClosedResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/requests/{id}": {
+      "get": {
+        "tags": [
+          "crate::future_api"
+        ],
+        "operationId": "request",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "501": {
+            "description": "Stage 07"
+          }
+        }
+      }
+    },
+    "/v1/requests/{id}/replay": {
+      "post": {
+        "tags": [
+          "crate::future_api"
+        ],
+        "operationId": "replay",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "501": {
+            "description": "Stage 07"
+          }
+        }
+      }
+    },
+    "/v1/services": {
+      "get": {
+        "tags": [],
+        "operationId": "services",
+        "parameters": [
+          {
+            "name": "watch",
+            "in": "query",
+            "description": "Wait for the next status change",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ServiceView"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [],
+        "operationId": "create_service",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateServiceRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ActiveEndpoint"
+                  }
+                }
+              }
+            }
+          },
+          "207": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ActiveEndpoint"
+                  }
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/services/{name}": {
+      "delete": {
+        "tags": [],
+        "operationId": "delete_service",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "forget",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "project_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClosedResponse"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/shutdown": {
+      "post": {
+        "tags": [],
+        "operationId": "shutdown",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClosedResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/status": {
+      "get": {
+        "tags": [
+          "crate::api_status"
+        ],
+        "operationId": "status",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatusResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "ActiveEndpoint": {
+        "type": "object",
+        "description": "A live or recently stopped exposure.",
+        "required": [
+          "id",
+          "service",
+          "driver",
+          "urls",
+          "status",
+          "since"
+        ],
+        "properties": {
+          "driver": {
+            "type": "string",
+            "description": "Driver registry name."
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Manager-local endpoint identifier."
+          },
+          "service": {
+            "type": "string",
+            "description": "Owning service name."
+          },
+          "since": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Time this status record was created."
+          },
+          "status": {
+            "$ref": "#/components/schemas/EndpointStatus",
+            "description": "Current lifecycle status."
+          },
+          "urls": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Public URLs currently assigned."
+          }
+        }
+      },
+      "ApiErrorBody": {
+        "type": "object",
+        "required": [
+          "error"
+        ],
+        "properties": {
+          "error": {
+            "$ref": "#/components/schemas/ApiErrorDetail"
+          }
+        }
+      },
+      "ApiErrorDetail": {
+        "type": "object",
+        "required": [
+          "code",
+          "message"
+        ],
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          }
+        }
+      },
+      "BufferPolicy": {
+        "type": "object",
+        "description": "Limits applied to offline webhook buffering.",
+        "required": [
+          "max_requests",
+          "max_body_bytes",
+          "ttl_secs"
+        ],
+        "properties": {
+          "max_body_bytes": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Maximum body bytes retained per request.",
+            "minimum": 0
+          },
+          "max_requests": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Maximum buffered request count.",
+            "minimum": 0
+          },
+          "ttl_secs": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Maximum retention time in seconds.",
+            "minimum": 0
+          }
+        }
+      },
+      "ClosedResponse": {
+        "type": "object",
+        "required": [
+          "closed"
+        ],
+        "properties": {
+          "closed": {
+            "type": "boolean"
+          }
+        }
+      },
+      "CreateServiceRequest": {
+        "type": "object",
+        "required": [
+          "service",
+          "endpoints"
+        ],
+        "properties": {
+          "default_remote": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "endpoints": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EndpointSpec"
+            }
+          },
+          "project_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "remotes": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "additionalProperties": {
+              "$ref": "#/components/schemas/Remote"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "service": {
+            "$ref": "#/components/schemas/Service"
+          }
+        }
+      },
+      "DoctorCheck": {
+        "type": "object",
+        "description": "Structured diagnostic result rendered by Stage 05.",
+        "required": [
+          "name",
+          "healthy",
+          "detail"
+        ],
+        "properties": {
+          "detail": {
+            "type": "string",
+            "description": "Human-readable detail without secrets."
+          },
+          "healthy": {
+            "type": "boolean",
+            "description": "Whether it succeeded."
+          },
+          "name": {
+            "type": "string",
+            "description": "Check name."
+          }
+        }
+      },
+      "EdgeAuth": {
+        "type": "object",
+        "description": "Access-control material enforced at a public HTTP edge.",
+        "properties": {
+          "basic": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Basic-auth credential in `user:password` form."
+          },
+          "bearer": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Bearer token expected in the Authorization header."
+          },
+          "link_key": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Base64-encoded HMAC key for expiring share links."
+          }
+        }
+      },
+      "EndpointSpec": {
+        "type": "object",
+        "description": "One desired public exposure through one driver instance.",
+        "required": [
+          "proto",
+          "driver",
+          "persist",
+          "inspect"
+        ],
+        "properties": {
+          "auth": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/EdgeAuth",
+                "description": "Relay-edge authentication policy."
+              }
+            ]
+          },
+          "buffer": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/BufferPolicy",
+                "description": "Offline HTTP buffering policy."
+              }
+            ]
+          },
+          "domain": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Requested offered server domain."
+          },
+          "driver": {
+            "type": "string",
+            "description": "Registered driver name."
+          },
+          "host": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Requested server-owned subdomain label."
+          },
+          "inspect": {
+            "type": "boolean",
+            "description": "Capture requests for inspection."
+          },
+          "persist": {
+            "$ref": "#/components/schemas/Persistence",
+            "description": "Endpoint lifetime."
+          },
+          "proto": {
+            "$ref": "#/components/schemas/ServiceProto",
+            "description": "Public protocol, overwritten from the service by the manager."
+          },
+          "public_port": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Provider-side public port.",
+            "minimum": 0
+          },
+          "qualifier": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Optional provider mode."
+          },
+          "remote": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Optional named Wormhole remote."
+          },
+          "reservation": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "Reservation used to reclaim a persistent Wormhole bind."
+          },
+          "retry": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/RetryPolicy",
+                "description": "Local delivery retries."
+              }
+            ]
+          }
+        }
+      },
+      "EndpointStatus": {
+        "oneOf": [
+          {
+            "type": "string",
+            "description": "Public routing is ready.",
+            "enum": [
+              "online"
+            ]
+          },
+          {
+            "type": "string",
+            "description": "Driver is reconnecting.",
+            "enum": [
+              "reconnecting"
+            ]
+          },
+          {
+            "type": "string",
+            "description": "Endpoint is intentionally stopped.",
+            "enum": [
+              "offline"
+            ]
+          },
+          {
+            "type": "object",
+            "description": "Driver terminated with an error.",
+            "required": [
+              "error"
+            ],
+            "properties": {
+              "error": {
+                "type": "string",
+                "description": "Driver terminated with an error."
+              }
+            }
+          }
+        ],
+        "description": "Current endpoint lifecycle status."
+      },
+      "HostPortTargetKind": {
+        "type": "string",
+        "enum": [
+          "host_port"
+        ]
+      },
+      "HostPortTargetSchema": {
+        "type": "object",
+        "required": [
+          "kind",
+          "value"
+        ],
+        "properties": {
+          "kind": {
+            "$ref": "#/components/schemas/HostPortTargetKind"
+          },
+          "value": {
+            "$ref": "#/components/schemas/HostPortValueSchema"
+          }
+        }
+      },
+      "HostPortValueSchema": {
+        "type": "array",
+        "items": {
+          "type": "object"
+        },
+        "maxItems": 2,
+        "minItems": 2
+      },
+      "IfaceAlias": {
+        "type": "object",
+        "description": "One discovered alias mapping.",
+        "required": [
+          "alias",
+          "iface",
+          "ip"
+        ],
+        "properties": {
+          "alias": {
+            "type": "string",
+            "description": "Stable alias used in configuration."
+          },
+          "iface": {
+            "type": "string",
+            "description": "Operating-system interface name."
+          },
+          "ip": {
+            "type": "string",
+            "description": "Selected interface address."
+          }
+        }
+      },
+      "IfaceTargetKind": {
+        "type": "string",
+        "enum": [
+          "iface"
+        ]
+      },
+      "IfaceTargetSchema": {
+        "type": "object",
+        "required": [
+          "kind",
+          "value"
+        ],
+        "properties": {
+          "kind": {
+            "$ref": "#/components/schemas/IfaceTargetKind"
+          },
+          "value": {
+            "$ref": "#/components/schemas/IfaceTargetValueSchema"
+          }
+        }
+      },
+      "IfaceTargetValueSchema": {
+        "type": "object",
+        "required": [
+          "alias",
+          "port"
+        ],
+        "properties": {
+          "alias": {
+            "type": "string"
+          },
+          "port": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          }
+        }
+      },
+      "Persistence": {
+        "type": "string",
+        "description": "Lifetime of a bind reservation.",
+        "enum": [
+          "temporary",
+          "persistent"
+        ]
+      },
+      "PortTargetKind": {
+        "type": "string",
+        "enum": [
+          "port"
+        ]
+      },
+      "PortTargetSchema": {
+        "type": "object",
+        "required": [
+          "kind",
+          "value"
+        ],
+        "properties": {
+          "kind": {
+            "$ref": "#/components/schemas/PortTargetKind"
+          },
+          "value": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          }
+        }
+      },
+      "Remote": {
+        "type": "object",
+        "description": "One named Wormhole relay.",
+        "required": [
+          "addr",
+          "server_name"
+        ],
+        "properties": {
+          "addr": {
+            "type": "string",
+            "description": "UDP authority of the relay."
+          },
+          "identity": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Optional per-remote identity override."
+          },
+          "server_name": {
+            "type": "string",
+            "description": "TLS and handshake-bound server name."
+          },
+          "trusted_ca": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Optional exclusive development CA root."
+          }
+        }
+      },
+      "RetryPolicy": {
+        "type": "object",
+        "description": "Local HTTP delivery retry policy reserved for Stage 07 behavior.",
+        "required": [
+          "max_attempts",
+          "initial_delay_ms"
+        ],
+        "properties": {
+          "initial_delay_ms": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Initial delay in milliseconds.",
+            "minimum": 0
+          },
+          "max_attempts": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Maximum delivery attempts.",
+            "minimum": 0
+          }
+        }
+      },
+      "Service": {
+        "type": "object",
+        "description": "A local thing to expose.",
+        "required": [
+          "name",
+          "target",
+          "proto"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Stable local service name."
+          },
+          "proto": {
+            "$ref": "#/components/schemas/ServiceProto",
+            "description": "Local delivery protocol."
+          },
+          "target": {
+            "$ref": "#/components/schemas/TargetSchema",
+            "description": "Unresolved local destination."
+          }
+        }
+      },
+      "ServiceProto": {
+        "type": "string",
+        "description": "Protocol spoken by a local service.",
+        "enum": [
+          "http",
+          "tcp"
+        ]
+      },
+      "ServiceView": {
+        "type": "object",
+        "required": [
+          "project_id",
+          "service",
+          "endpoints"
+        ],
+        "properties": {
+          "endpoints": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ActiveEndpoint"
+            }
+          },
+          "project_id": {
+            "type": "string"
+          },
+          "service": {
+            "$ref": "#/components/schemas/Service"
+          }
+        }
+      },
+      "StatusResponse": {
+        "type": "object",
+        "required": [
+          "version",
+          "uptime_seconds",
+          "pid",
+          "services",
+          "endpoints"
+        ],
+        "properties": {
+          "endpoints": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "pid": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "services": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "uptime_seconds": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "version": {
+            "type": "string"
+          }
+        }
+      },
+      "TargetSchema": {
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/PortTargetSchema"
+          },
+          {
+            "$ref": "#/components/schemas/HostPortTargetSchema"
+          },
+          {
+            "$ref": "#/components/schemas/IfaceTargetSchema"
+          }
+        ],
+        "description": "Schema-only representation of the tagged target wire contract."
+      }
+    },
+    "securitySchemes": {
+      "bearer_auth": {
+        "type": "http",
+        "scheme": "bearer"
+      }
+    }
+  },
+  "security": [
+    {
+      "bearer_auth": []
+    }
+  ]
+}

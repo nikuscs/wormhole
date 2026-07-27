@@ -243,9 +243,16 @@ async fn run_fake_connection(
             }
             ControlFrame::Unbind { bind, .. } => {
                 binds.remove(&bind);
+                channel.send(&ControlFrame::Unbound { bind }).await.expect("unbound");
                 if let Some((&remaining, &marker)) = binds.iter().next() {
                     open_fake_stream(connection.clone(), remaining, marker, results.clone());
                 }
+            }
+            ControlFrame::ForgetReservation { reservation } => {
+                channel
+                    .send(&ControlFrame::ForgotReservation { reservation })
+                    .await
+                    .expect("forgot reservation");
             }
             _ => {}
         }
