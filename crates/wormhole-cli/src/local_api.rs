@@ -1,9 +1,11 @@
 //! Token-authenticated local HTTP API handlers.
 
-use std::{collections::BTreeMap, sync::Arc, time::Duration};
+use std::{collections::BTreeMap, time::Duration};
 
 use crate::{
-    api_expose::{expose_desired, prepare_forget_bindings, restore_reservations, wait_ready},
+    api_expose::{
+        expose_desired, failure_message, prepare_forget_bindings, restore_reservations, wait_ready,
+    },
     state_db::DesiredService,
 };
 use axum::{
@@ -240,12 +242,40 @@ async fn create_service(
         state.bindings.write().await.insert(id, (desired_key.clone(), index));
     }
     let endpoints = wait_ready(&state.manager, &ids).await;
+    if !endpoints.iter().any(|endpoint| endpoint.status == EndpointStatus::Online) {
+        rollback_failed_create(&state, &ids, &desired_key, previous).await?;
+        return Err(ApiError::unavailable(failure_message(&endpoints)));
+    }
     let status = if endpoints.iter().all(|endpoint| endpoint.status == EndpointStatus::Online) {
         StatusCode::CREATED
     } else {
         StatusCode::MULTI_STATUS
     };
     Ok((status, Json(endpoints)))
+}
+
+async fn rollback_failed_create(
+    state: &ApiState,
+    ids: &[Uuid],
+    desired_key: &str,
+    previous: Option<DesiredService>,
+) -> Result<(), ApiError> {
+    for id in ids {
+        state.manager.discard(*id).await;
+    }
+    let _persistence = state.persistence_lock.lock().await;
+    if let Some(previous) = previous {
+        state.database.put(&previous).map_err(|error| ApiError::internal(error.to_string()))?;
+        state.desired.write().await.insert(desired_key.to_owned(), previous);
+    } else {
+        state
+            .database
+            .delete(desired_key)
+            .map_err(|error| ApiError::internal(error.to_string()))?;
+        state.desired.write().await.remove(desired_key);
+    }
+    state.bindings.write().await.retain(|_, (key, _)| key != desired_key);
+    Ok(())
 }
 
 #[derive(Debug, Deserialize)]
@@ -438,12 +468,10 @@ async fn reload(State(state): State<ApiState>) -> Result<Json<ClosedResponse>, A
     let _expose = state.expose_lock.lock().await;
     let config = crate::daemon::load_config(state.config_path.as_ref())
         .map_err(|error| ApiError::internal(error.to_string()))?;
-    let driver = wormhole_core::wormhole_driver::WormholeDriver::new(
-        config.remotes.clone(),
-        config.default_remote.clone(),
-        Arc::clone(&state.identities),
-    );
-    state.manager.registry().register(Arc::new(driver));
+    let registry = wormhole_core::drivers::build_registry(&config, state.identities.clone());
+    for driver in registry.all().into_iter().filter(|driver| driver.name() == "wormhole") {
+        state.manager.registry().register(driver);
+    }
     state.manager.reload_config(config.clone());
     *state.config.write().await = config;
     Ok(Json(ClosedResponse { closed: true }))

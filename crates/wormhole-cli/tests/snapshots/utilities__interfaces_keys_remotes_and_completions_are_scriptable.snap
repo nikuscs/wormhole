@@ -42,6 +42,7 @@ _wormhole() {
 _arguments "${_arguments_options[@]}" : \
 '*--endpoint=[Add a provider endpoint specification; repeat for multiple URLs]:DRIVER[:QUALIFIER]:_default' \
 '--host=[Request a server-owned subdomain label]:HOST:_default' \
+'--public-port=[Request a provider-side public TCP port]:PORT:_default' \
 '--buffer=[Buffer up to this many offline requests]:COUNT:_default' \
 '--retry=[Configure local delivery retries]:SPEC:_default' \
 '(--auth-file)--auth=[Configure relay-edge authentication]:POLICY:_default' \
@@ -68,6 +69,7 @@ _arguments "${_arguments_options[@]}" : \
 _arguments "${_arguments_options[@]}" : \
 '*--endpoint=[Add a provider endpoint specification; repeat for multiple URLs]:DRIVER[:QUALIFIER]:_default' \
 '--host=[Request a server-owned subdomain label]:HOST:_default' \
+'--public-port=[Request a provider-side public TCP port]:PORT:_default' \
 '--buffer=[Buffer up to this many offline requests]:COUNT:_default' \
 '--retry=[Configure local delivery retries]:SPEC:_default' \
 '(--auth-file)--auth=[Configure relay-edge authentication]:POLICY:_default' \
@@ -95,6 +97,7 @@ _arguments "${_arguments_options[@]}" : \
 '--app-port=[Expected application port; skips automatic allocation]:APP_PORT:_default' \
 '*--endpoint=[Add a provider endpoint specification; repeat for multiple URLs]:DRIVER[:QUALIFIER]:_default' \
 '--host=[Request a server-owned subdomain label]:HOST:_default' \
+'--public-port=[Request a provider-side public TCP port]:PORT:_default' \
 '--buffer=[Buffer up to this many offline requests]:COUNT:_default' \
 '--retry=[Configure local delivery retries]:SPEC:_default' \
 '(--auth-file)--auth=[Configure relay-edge authentication]:POLICY:_default' \

@@ -284,6 +284,7 @@ impl TunnelDriver for WormholeDriver {
         events: mpsc::Sender<DriverEvent>,
         stop: CancellationToken,
         forget: watch::Receiver<bool>,
+        _preserve: watch::Receiver<bool>,
     ) -> Result<(), DriverError> {
         self.run_loop(spec, target, events, stop, forget).await
     }

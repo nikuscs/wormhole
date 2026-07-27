@@ -145,7 +145,7 @@ fn run_detects_child_that_ignores_port() {
 
 fn wait_for_file(path: &std::path::Path) {
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-    while !path.exists() {
+    while fs::metadata(path).map_or(true, |metadata| metadata.len() == 0) {
         assert!(std::time::Instant::now() < deadline, "child pid file missing");
         std::thread::sleep(std::time::Duration::from_millis(25));
     }

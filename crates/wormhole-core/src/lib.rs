@@ -3,6 +3,7 @@
 pub mod config;
 pub mod doctor;
 pub mod driver;
+pub mod drivers;
 pub mod error;
 pub mod ifaces;
 pub mod keys_store;

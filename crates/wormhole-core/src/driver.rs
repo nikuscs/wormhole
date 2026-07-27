@@ -17,6 +17,8 @@ use crate::{
 pub enum DriverHealth {
     /// Driver is ready.
     Healthy,
+    /// Driver is installed but needs configuration or authorization.
+    Degraded(String),
     /// Driver cannot currently run.
     Unavailable(String),
 }
@@ -119,6 +121,11 @@ pub trait TunnelDriver: Send + Sync {
     /// Cheap health probe.
     async fn check(&self) -> DriverHealth;
 
+    /// Detailed provider checks used by `wormhole doctor`.
+    async fn diagnostics(&self) -> Vec<(String, DriverHealth)> {
+        vec![(self.name().to_owned(), self.check().await)]
+    }
+
     /// Owns one endpoint lifecycle, including reconnect behavior.
     async fn run(
         &self,
@@ -136,6 +143,7 @@ pub trait TunnelDriver: Send + Sync {
         events: mpsc::Sender<DriverEvent>,
         stop: CancellationToken,
         _forget: watch::Receiver<bool>,
+        _preserve: watch::Receiver<bool>,
     ) -> Result<(), DriverError> {
         self.run(spec, target, events, stop).await
     }

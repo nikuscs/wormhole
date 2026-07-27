@@ -5,9 +5,9 @@ use std::sync::Arc;
 use crate::{
     config::{ClientConfig, ConfigLayer},
     driver::{DriverHealth, DriverRegistry},
+    drivers::build_registry,
     keys_store::IdentityStore,
     model::DoctorCheck,
-    wormhole_driver::WormholeDriver,
     wormhole_transport::probe_remote,
 };
 
@@ -40,12 +40,7 @@ pub async fn doctor() -> Vec<DoctorCheck> {
             ];
         }
     };
-    let registry = DriverRegistry::new();
-    registry.register(Arc::new(WormholeDriver::new(
-        config.remotes.clone(),
-        config.default_remote.clone(),
-        Arc::clone(&identities),
-    )));
+    let registry = build_registry(&config, Arc::clone(&identities));
     doctor_with(&config, &registry, &identities).await
 }
 
@@ -79,15 +74,16 @@ pub async fn doctor_with(
         });
     }
     for driver in registry.all() {
-        let health = driver.check().await;
-        checks.push(DoctorCheck {
-            name: format!("driver:{}", driver.name()),
-            healthy: health == DriverHealth::Healthy,
-            detail: match health {
-                DriverHealth::Healthy => "ready".to_owned(),
-                DriverHealth::Unavailable(reason) => reason,
-            },
-        });
+        for (name, health) in driver.diagnostics().await {
+            checks.push(DoctorCheck {
+                name: format!("driver:{name}"),
+                healthy: health == DriverHealth::Healthy,
+                detail: match health {
+                    DriverHealth::Healthy => "ready".to_owned(),
+                    DriverHealth::Degraded(reason) | DriverHealth::Unavailable(reason) => reason,
+                },
+            });
+        }
     }
     checks
 }

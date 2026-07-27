@@ -10,6 +10,22 @@ use crate::{
     state_db::DesiredService,
 };
 
+pub fn failure_message(endpoints: &[ActiveEndpoint]) -> String {
+    let errors = endpoints
+        .iter()
+        .filter_map(|endpoint| match &endpoint.status {
+            EndpointStatus::Error(message) => Some(message.as_str()),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("; ");
+    if errors.is_empty() {
+        "all providers failed to become ready before the startup timeout".to_owned()
+    } else {
+        errors
+    }
+}
+
 pub fn restore_reservations(endpoints: &mut [EndpointSpec], cached: &[EndpointSpec]) -> bool {
     let mut cached = cached
         .iter()

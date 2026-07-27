@@ -17,7 +17,7 @@ use rand::RngExt as _;
 use tokio::{net::UnixListener, sync::RwLock};
 use tokio_util::sync::CancellationToken;
 use wormhole_core::{
-    ClientConfig, DriverEvent, DriverRegistry, TunnelManager, config::ConfigLayer,
+    ClientConfig, DriverEvent, TunnelManager, config::ConfigLayer, drivers::build_registry,
     keys_store::IdentityStore, wormhole_driver::WormholeDriver,
 };
 use wormhole_proto::frames::Persistence;
@@ -70,12 +70,7 @@ impl DaemonServer {
         fs::set_permissions(&paths.socket, fs::Permissions::from_mode(0o600))?;
         let config = load_config(config_path)?;
         let identities = Arc::new(IdentityStore::from_environment()?);
-        let registry = DriverRegistry::new();
-        registry.register(Arc::new(WormholeDriver::new(
-            config.remotes.clone(),
-            config.default_remote.clone(),
-            Arc::clone(&identities),
-        )));
+        let registry = build_registry(&config, Arc::clone(&identities));
         #[cfg(debug_assertions)]
         if std::env::var_os("WORMHOLE_ENABLE_MOCK_DRIVER").as_deref()
             == Some(std::ffi::OsStr::new("1"))

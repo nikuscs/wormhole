@@ -56,12 +56,12 @@ authorization for that provider's scoped configuration changes. Do not add a sec
 preview exact changes in verbose/JSON output and preserve unrelated state. Plain `cloudflare`
 creates only an unauthenticated quick-tunnel subprocess.
 
-- [ ] **V1 — Process supervisor** (`process.rs`). One reusable piece: spawn a child with args/env,
+- [x] **V1 — Process supervisor** (`process.rs`). One reusable piece: spawn a child with args/env,
   kill-on-drop (`tokio::process` + process-group kill via nix so grandchildren die), restart
   with the same backoff policy as C5, expose `wait_healthy(probe: impl Fn() -> Future<bool>)`.
   Validation: unit tests with `/bin/sleep` + a probe.
 
-- [ ] **V2 — Tailscale driver.**
+- [x] **V2 — Tailscale driver.**
   - `check()`: binary discovery first (`which tailscale`, plus the macOS app path
     `/Applications/Tailscale.app/Contents/MacOS/Tailscale`); missing →
     `DriverHealth::Unavailable { hint: "install: https://tailscale.com/download (or brew install tailscale)" }`
@@ -90,7 +90,7 @@ creates only an unauthenticated quick-tunnel subprocess.
   implementation replaying captured JSON fixtures (record real outputs into
   `testdata/tailscale/*.json`). Real-binary test is `#[ignore = "requires tailscale"]`.
 
-- [ ] **V3 — Cloudflare driver.**
+- [x] **V3 — Cloudflare driver.**
   - `check()`: binary discovery (`which cloudflared`, `WORMHOLE_CLOUDFLARED_BIN` override);
     missing → `DriverHealth::Unavailable { hint: "install: brew install cloudflared" }`,
     preflighted before every use (same rule as V2). Then `cloudflared --version`; for named
@@ -113,14 +113,14 @@ creates only an unauthenticated quick-tunnel subprocess.
   distinct endpoint tunnels/configs without touching unrelated fake DNS state. Real test
   `#[ignore]`.
 
-- [ ] **V4 — Conformance suite.** One shared test harness
+- [x] **V4 — Conformance suite.** One shared test harness
   (`drivers/conformance.rs`, `#[cfg(test)]`): given any driver + a locally spawned echo HTTP
   server as target, assert the lifecycle contract: emits `Ready` first, urls non-empty, `stop`
   cancellation returns within 5s, temporary endpoints clean up their provider state (mockable
   assertion hook). Run it over MockDriver + fixture-backed tailscale/cloudflare fakes.
   Validation: `cargo test -p wormhole-core drivers::` green.
 
-- [ ] **V5 — Doctor + docs.** Extend `wormhole doctor` with provider checks (binary found,
+- [x] **V5 — Doctor + docs.** Extend `wormhole doctor` with provider checks (binary found,
   version, login state, funnel attr). `docs/providers.md`: setup guide per provider (exact
   commands to log in / grant funnel), the qualifier syntax table
   (`tailscale`, `tailscale:funnel`, `cloudflare`, `cloudflare:quick|named`), and a

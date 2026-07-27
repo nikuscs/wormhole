@@ -3,10 +3,10 @@
 use std::{net::IpAddr, sync::Arc, time::Duration};
 
 use wormhole_core::{
-    ActiveEndpoint, ClientConfig, DriverRegistry, EndpointSpec, Service, Target, TunnelManager,
+    ActiveEndpoint, ClientConfig, EndpointSpec, Service, Target, TunnelManager,
+    drivers::build_registry,
     keys_store::IdentityStore,
     model::{EndpointStatus, RetryPolicy, ServiceProto},
-    wormhole_driver::WormholeDriver,
 };
 use wormhole_proto::frames::{BufferPolicy, EdgeAuth, Persistence};
 
@@ -129,7 +129,7 @@ pub async fn build_specs(
                 remote,
                 host: options.host.clone(),
                 domain: None,
-                public_port: None,
+                public_port: options.public_port,
                 persist: if options.persist {
                     Persistence::Persistent
                 } else {
@@ -256,12 +256,7 @@ pub async fn start_foreground(
     config: ClientConfig,
 ) -> Result<(Arc<TunnelManager>, Vec<ActiveEndpoint>), CliError> {
     let identities = Arc::new(IdentityStore::from_environment()?);
-    let registry = DriverRegistry::new();
-    registry.register(Arc::new(WormholeDriver::new(
-        config.remotes.clone(),
-        config.default_remote.clone(),
-        identities,
-    )));
+    let registry = build_registry(&config, identities);
     #[cfg(debug_assertions)]
     if std::env::var_os("WORMHOLE_ENABLE_MOCK_DRIVER").as_deref() == Some(std::ffi::OsStr::new("1"))
     {

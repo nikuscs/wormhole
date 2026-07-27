@@ -86,6 +86,9 @@ pub struct TunnelOptions {
     /// Request a server-owned subdomain label.
     #[arg(long)]
     pub host: Option<String>,
+    /// Request a provider-side public TCP port.
+    #[arg(long, value_name = "PORT")]
+    pub public_port: Option<u16>,
     /// Keep the endpoint and reclaim its reservation after restarts.
     #[arg(long)]
     pub persist: bool,

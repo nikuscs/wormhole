@@ -22,6 +22,9 @@ pub enum DriverError {
     /// No driver is registered under this name.
     #[error("unknown tunnel driver: {0}")]
     Unknown(String),
+    /// Driver preflight failed.
+    #[error("tunnel driver unavailable: {0}")]
+    Unavailable(String),
     /// The endpoint requests unsupported options.
     #[error("driver capability mismatch: {0}")]
     Capability(String),

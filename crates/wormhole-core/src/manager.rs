@@ -20,10 +20,10 @@ use uuid::Uuid;
 
 use crate::{
     config::ClientConfig,
-    driver::{DriverCapabilities, DriverEvent, DriverRegistry, EndpointEvent, TunnelDriver},
+    driver::{DriverEvent, DriverRegistry, EndpointEvent, TunnelDriver},
     error::{DriverError, ManagerError},
     ifaces::IfaceResolver,
-    manager_status::apply_ready_urls,
+    manager_status::{apply_ready_urls, preflight_driver, validate_capabilities},
     model::{
         ActiveEndpoint, EndpointSpec, EndpointStatus, ResolvedTarget, Service, ServiceProto,
         StatusChange, Target,
@@ -47,6 +47,7 @@ struct EndpointTask {
     service: String,
     stop: CancellationToken,
     forget: tokio::sync::watch::Sender<bool>,
+    preserve: tokio::sync::watch::Sender<bool>,
     task: JoinHandle<()>,
 }
 
@@ -90,6 +91,7 @@ impl TunnelManager {
             specs = self.default_specs(service.proto);
         }
         let target = self.resolve_target(&service.target).await?;
+        let allow_partial = specs.len() > 1;
         let mut prepared = Vec::with_capacity(specs.len());
         for spec in specs {
             if spec.proto != service.proto {
@@ -105,6 +107,7 @@ impl TunnelManager {
                 .ok_or_else(|| DriverError::Unknown(spec.driver.clone()))?;
             validate_capabilities(&spec, driver.capabilities())?;
             driver.validate(&spec)?;
+            let driver = preflight_driver(driver, allow_partial).await?;
             prepared.push((Uuid::now_v7(), spec, driver));
         }
         let ids = prepared.iter().map(|(id, _, _)| *id).collect::<Vec<_>>();
@@ -156,6 +159,12 @@ impl TunnelManager {
     pub async fn fail_endpoint(&self, endpoint: Uuid, message: String) {
         let _closed = self.close_with_forget(endpoint, true).await;
         self.set_status(endpoint, EndpointStatus::Error(message));
+    }
+
+    /// Closes an endpoint and removes it from the manager snapshot.
+    pub async fn discard(&self, endpoint: Uuid) {
+        let _closed = self.close(endpoint).await;
+        self.endpoints.write().remove(&endpoint);
     }
 
     /// Closes every endpoint belonging to a service.
@@ -224,6 +233,7 @@ impl TunnelManager {
             tasks.drain().collect::<Vec<_>>()
         };
         for (_, task) in &tasks {
+            let _changed = task.preserve.send(true);
             task.stop.cancel();
         }
         let drain = futures::future::join_all(tasks.iter_mut().map(|(_, task)| &mut task.task));
@@ -248,6 +258,7 @@ impl TunnelManager {
     ) {
         let stop = CancellationToken::new();
         let (forget, forget_rx) = tokio::sync::watch::channel(false);
+        let (preserve, preserve_rx) = tokio::sync::watch::channel(false);
         let (events_tx, events_rx) = mpsc::channel(64);
         self.endpoints.write().insert(
             id,
@@ -274,6 +285,7 @@ impl TunnelManager {
             events_rx,
             task_stop,
             forget_rx,
+            preserve_rx,
             endpoints,
             status,
             driver_events,
@@ -282,7 +294,7 @@ impl TunnelManager {
         self.tasks
             .lock()
             .await
-            .insert(id, EndpointTask { service: service.to_owned(), stop, forget, task });
+            .insert(id, EndpointTask { service: service.to_owned(), stop, forget, preserve, task });
     }
 
     fn set_status(&self, id: Uuid, status: EndpointStatus) {
@@ -344,13 +356,14 @@ async fn run_endpoint(
     mut events_rx: mpsc::Receiver<DriverEvent>,
     stop: CancellationToken,
     forget: tokio::sync::watch::Receiver<bool>,
+    preserve: tokio::sync::watch::Receiver<bool>,
     endpoints: Arc<RwLock<HashMap<Uuid, ActiveEndpoint>>>,
     status_tx: broadcast::Sender<StatusChange>,
     driver_events_tx: mpsc::Sender<EndpointEvent>,
     external_handoff: Arc<AtomicBool>,
 ) {
     let driver_stop = stop.child_token();
-    let run = driver.run_controlled(spec, target, events_tx, driver_stop, forget);
+    let run = driver.run_controlled(spec, target, events_tx, driver_stop, forget, preserve);
     tokio::pin!(run);
     loop {
         tokio::select! {
@@ -462,34 +475,6 @@ fn update_status(
         endpoint.since = jiff::Timestamp::now();
     }
     let _sent = status_tx.send(StatusChange { endpoint: id, status });
-}
-
-fn validate_capabilities(
-    spec: &EndpointSpec,
-    capabilities: DriverCapabilities,
-) -> Result<(), DriverError> {
-    let http = spec.proto == ServiceProto::Http;
-    if spec.buffer.is_some() && spec.persist == wormhole_proto::frames::Persistence::Temporary {
-        return Err(DriverError::Capability(
-            "buffer policy requires a persistent endpoint".to_owned(),
-        ));
-    }
-    let options = [
-        (spec.buffer.is_some(), crate::driver::Capability::Buffer, "buffer"),
-        (spec.auth.is_some(), crate::driver::Capability::Auth, "auth"),
-        (spec.retry.is_some(), crate::driver::Capability::Retry, "retry"),
-        (spec.inspect, crate::driver::Capability::Inspect, "inspect"),
-    ];
-    let unsupported = options.into_iter().find_map(|(requested, capability, name)| {
-        (requested && (!http || !capabilities.supports(capability))).then_some(name)
-    });
-    if let Some(option) = unsupported {
-        return Err(DriverError::Capability(format!(
-            "driver {} does not support {option} for {:?}",
-            spec.driver, spec.proto
-        )));
-    }
-    Ok(())
 }
 
 #[cfg(test)]
