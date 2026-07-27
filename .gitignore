@@ -1,0 +1,7 @@
+target/
+dist/
+*.pem
+*.key
+.env
+.DS_Store
+wormhole.toml.local
