@@ -92,7 +92,7 @@ crates/wormhole-core/src/
 
 ## Tasks
 
-- [ ] **C1 — Config** (`config.rs`). Global `~/.config/wormhole/config.toml`
+- [x] **C1 — Config** (`config.rs`). Global `~/.config/wormhole/config.toml`
   (path via `directories`, overridable `WORMHOLE_CONFIG`):
 
   ```toml
@@ -120,12 +120,12 @@ crates/wormhole-core/src/
   explicit args. Unknown keys warn, don't fail. Validation: unit tests for merge precedence +
   a full-file insta snapshot round-trip.
 
-- [ ] **C2 — Identity store** (`keys_store.rs`). Default identity
+- [x] **C2 — Identity store** (`keys_store.rs`). Default identity
   `~/.config/wormhole/keys/identity.key` — auto-generate on first use (log fingerprint once),
   0600 enforced by P3. `resolve_identity(remote) -> Identity` honoring per-remote override.
   Validation: unit test in tempdir HOME.
 
-- [ ] **C3 — Interface aliases** (`ifaces.rs`). Auto-discovery via `netdev`/`if-addrs`, refreshed
+- [x] **C3 — Interface aliases** (`ifaces.rs`). Auto-discovery via `netdev`/`if-addrs`, refreshed
   on demand (no background poll):
   - `localhost` → 127.0.0.1 (always)
   - `lan` → IPv4 of the default-route interface (netdev `get_default_interface`)
@@ -137,7 +137,7 @@ crates/wormhole-core/src/
   Validation: unit tests with injected fake interface list (make discovery take a
   `fn() -> Vec<Interface>` for testability); `resolve("localhost")` = 127.0.0.1.
 
-- [ ] **C4 — Port utilities** (`ports.rs`).
+- [x] **C4 — Port utilities** (`ports.rs`).
   - `alloc_port(range: 4000..=4999) -> u16` — bind `127.0.0.1:0`-style probing inside range,
     return first free (bind and drop; races are fine, caller retries once).
   - `wait_for_listener(addr, timeout)` — poll `TcpStream::connect` every 150ms.
@@ -148,7 +148,7 @@ crates/wormhole-core/src/
     (portless technique: inject first, poll as fallback).
   Validation: unit test — spawn a `TcpListener` on an alloc'd port in-process, detect it by pid.
 
-- [ ] **C5 — Wormhole driver** (`wormhole_driver.rs`) — the reference driver, over our protocol:
+- [x] **C5 — Wormhole driver** (`wormhole_driver.rs`) — the reference driver, over our protocol:
   - quinn client endpoint: rustls with webpki roots; `trusted_ca` remote option installs a
     single-CA root store instead (never a "skip verify" switch). TLS server name and the
     handshake's expected `server_name` are the same configured value (P4 enforces the match).
@@ -183,7 +183,7 @@ crates/wormhole-core/src/
   `crates/wormhole-e2e` (stage 08). Here: unit-test the pieces with a fake in-process QUIC
   server built from proto + quinn in `#[cfg(test)]`.)
 
-- [ ] **C6 — Tunnel manager** (`manager.rs`).
+- [x] **C6 — Tunnel manager** (`manager.rs`).
   - `TunnelManager::new(registry, config)`; API:
     `expose(service, Vec<EndpointSpec>) -> Vec<EndpointId>` (spawns one driver task per spec —
     this is the multi-URL-at-once feature: specs with different drivers run concurrently;
@@ -198,7 +198,7 @@ crates/wormhole-core/src/
   Validation: unit tests with a `MockDriver` (registered as `"mock"`): expose with 3 specs →
   3 Ready urls listed; close one endpoint → others unaffected; driver error surfaces in list.
 
-- [ ] **C7 — Doctor data.** `core::doctor() -> Vec<DoctorCheck>`: config parse, identity exists +
+- [x] **C7 — Doctor data.** `core::doctor() -> Vec<DoctorCheck>`: config parse, identity exists +
   perms, each remote QUIC/TLS connection reachable (3s timeout; application auth not required),
   each registered driver's `check()`. Pure data — CLI renders it in stage 05.
   Validation: unit test with mock driver healths.

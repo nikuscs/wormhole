@@ -1,0 +1,22 @@
+---
+source: crates/wormhole-core/src/config_tests.rs
+expression: encoded
+---
+default_remote = "myvps"
+
+[remotes.myvps]
+addr = "tun.example.com:443"
+server_name = "tun.example.com"
+trusted_ca = "/tmp/ca.pem"
+
+[remotes.work]
+addr = "wh.corp.example:443"
+server_name = "wh.corp.example"
+identity = "/tmp/work.key"
+
+[aliases]
+db-box = "192.168.1.40"
+
+[defaults]
+drivers = ["wormhole"]
+inspect = true

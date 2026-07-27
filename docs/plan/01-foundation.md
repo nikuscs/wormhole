@@ -82,7 +82,7 @@ later stage only adds code, never build scaffolding.
   [workspace.dependencies]
   # runtime
   tokio = { version = "1.53", features = ["full"] }
-  tokio-util = { version = "0.7", features = ["codec"] }
+  tokio-util = { version = "0.7", features = ["codec", "rt"] } # framed I/O + CancellationToken
   futures = "0.3"
   bytes = "1.12"
   # transport / tls
