@@ -26,8 +26,10 @@ protocol unit-testable and keeps client/server from drifting.
   no shared tokens on disk.
 - **Server-name binding:** the client MUST refuse to sign if `Challenge.server` differs from its
   configured `server_name` for that remote (prevents a relay from proxying the challenge to
-  another relay). Signed transcript is length-prefixed and context-tagged:
-  `"wormhole-v1-challenge" || len(nonce) || nonce || len(server) || server || proto_version_le`.
+  another relay). Signed transcript is context-tagged with fixed-width little-endian lengths:
+  `"wormhole-v1-challenge" || u32_le(nonce.len) || nonce || u32_le(server_utf8.len) ||
+  server_utf8 || u16_le(proto_version)`. All protocol base64 is canonical RFC 4648 Standard with
+  required `=` padding; decoders reject unpadded and otherwise non-canonical forms.
 - Versioning: `PROTO_VERSION: u16 = 1` inside `Hello`; peers require an exact match within ALPN
   `wormhole/1`. A wire-incompatible version gets a new ALPN. Unknown JSON fields are ignored
   (`serde(default)` + no `deny_unknown_fields`) for additive changes within v1.
@@ -46,7 +48,7 @@ crates/wormhole-proto/src/
 
 ## Tasks
 
-- [ ] **P1 — Frame types** (`frames.rs`). Serde enums, internally tagged:
+- [x] **P1 — Frame types** (`frames.rs`). Serde enums, internally tagged:
 
   ```rust
   pub const PROTO_VERSION: u16 = 1;
@@ -153,7 +155,7 @@ crates/wormhole-proto/src/
   Validation: `cargo test -p wormhole-proto` serde round-trip test for every variant
   (build one value per variant, `serde_json` round-trip, assert eq).
 
-- [ ] **P2 — Codec** (`codec.rs`). Thin helpers so client/server never hand-roll framing:
+- [x] **P2 — Codec** (`codec.rs`). Thin helpers so client/server never hand-roll framing:
 
   ```rust
   pub struct ControlChannel<S> { framed: Framed<S, LengthDelimitedCodec>, }
@@ -173,7 +175,7 @@ crates/wormhole-proto/src/
   Validation: unit test over `tokio::io::duplex` — send 100 mixed frames, receive identical;
   oversized frame returns `ProtoError::FrameTooLarge`, not a panic.
 
-- [ ] **P3 — Keys** (`keys.rs`). Ed25519 identity handling:
+- [x] **P3 — Keys** (`keys.rs`). Ed25519 identity handling:
 
   ```rust
   pub struct Identity { signing: ed25519_dalek::SigningKey }   // wrap, zeroize on drop
@@ -199,7 +201,7 @@ crates/wormhole-proto/src/
   Validation: unit tests — sign/verify round-trip; tampered nonce/server/proto each fail;
   `load` rejects 0o644 file with a clear error; fingerprint is stable (insta snapshot).
 
-- [ ] **P4 — Handshake state machines** (`handshake.rs`). Pure, sans-IO, so both sides share one
+- [x] **P4 — Handshake state machines** (`handshake.rs`). Pure, sans-IO, so both sides share one
   tested implementation:
 
   ```rust
@@ -221,7 +223,7 @@ crates/wormhole-proto/src/
   denied; out-of-order `Auth` before `Hello` errors; version mismatch carries `expected`;
   mismatched `Challenge.server` aborts without producing a signature.
 
-- [ ] **P5 — Property tests.** `proptest`: arbitrary byte-noise into `ControlChannel::recv`
+- [x] **P5 — Property tests.** `proptest`: arbitrary byte-noise into `ControlChannel::recv`
   never panics (errors are fine); arbitrary valid frames always round-trip through codec.
   Validation: `cargo test -p wormhole-proto -- prop` passes.
 

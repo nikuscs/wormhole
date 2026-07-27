@@ -1,0 +1,5 @@
+---
+source: crates/wormhole-proto/src/keys_tests.rs
+expression: fixed_identity().fingerprint()
+---
+WH256:/oEsEvOrTOasXbaaw1L5BssbEe9D+zPiUu9/9VImOIk=

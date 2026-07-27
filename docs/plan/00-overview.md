@@ -31,7 +31,7 @@ For each stage:
 ## Stage index
 
 - [x] **01 — Foundation** (`01-foundation.md`): workspace, crates, lints, CI, tooling
-- [ ] **02 — Protocol** (`02-protocol.md`): `wormhole-proto` wire format, Ed25519 handshake, codec
+- [x] **02 — Protocol** (`02-protocol.md`): `wormhole-proto` wire format, Ed25519 handshake, codec
 - [ ] **03 — Relay server** (`03-server.md`): `wormholed` QUIC listener, HTTPS/SNI edge, ACME, TCP forwards, persistence
 - [ ] **04 — Client core** (`04-client-core.md`): driver trait + registry, remotes, tunnel manager, interfaces, port utils
 - [ ] **05 — Daemon & CLI** (`05-daemon-cli.md`): auto-spawned daemon, local API, full CLI, `wormhole run`, `wormhole.toml`
