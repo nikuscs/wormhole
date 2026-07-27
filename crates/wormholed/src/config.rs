@@ -1,6 +1,11 @@
 //! Relay configuration loading, defaults, initialization, and validation.
 
-use std::{collections::HashSet, fs, net::SocketAddr};
+use std::{
+    collections::HashSet,
+    fs,
+    net::SocketAddr,
+    os::unix::fs::{MetadataExt, PermissionsExt},
+};
 
 use camino::{Utf8Path, Utf8PathBuf};
 use serde::{Deserialize, Serialize};
@@ -158,6 +163,11 @@ impl WormholedConfig {
     /// Validates all cross-field and filesystem invariants.
     pub fn validate(&self) -> Result<(), ConfigError> {
         validate_domains(&self.server.domains)?;
+        if self.server.public_https_port == Some(0) {
+            return Err(ConfigError::Invalid(
+                "server.public_https_port must be non-zero when set".to_owned(),
+            ));
+        }
         if self.tcp.port_range.start == 0 || self.tcp.port_range.start > self.tcp.port_range.end {
             return Err(ConfigError::Invalid(
                 "tcp.port_range must be non-zero and ordered".to_owned(),
@@ -194,6 +204,10 @@ impl WormholedConfig {
         let authorized_keys = data_dir.join("authorized_keys");
         fs::create_dir_all(&authorized_keys)
             .map_err(|source| ConfigError::Write { path: authorized_keys.clone(), source })?;
+        fs::set_permissions(&data_dir, fs::Permissions::from_mode(0o700))
+            .map_err(|source| ConfigError::Write { path: data_dir.clone(), source })?;
+        fs::set_permissions(&authorized_keys, fs::Permissions::from_mode(0o700))
+            .map_err(|source| ConfigError::Write { path: authorized_keys.clone(), source })?;
         let config = Self::development(data_dir, authorized_keys);
         let serialized = toml::to_string_pretty(&config)?;
         let contents = format!(
@@ -201,6 +215,8 @@ impl WormholedConfig {
              # Static and ACME wildcard certificate examples are documented in docs/server-setup.md.\n{serialized}"
         );
         fs::write(path, contents)
+            .map_err(|source| ConfigError::Write { path: path.to_owned(), source })?;
+        fs::set_permissions(path, fs::Permissions::from_mode(0o600))
             .map_err(|source| ConfigError::Write { path: path.to_owned(), source })
     }
 
@@ -290,7 +306,17 @@ fn validate_acme(config: &WormholedConfig) -> Result<(), ConfigError> {
     if !acme.contact.starts_with("mailto:") || !acme.directory.starts_with("https://") {
         return Err(ConfigError::Invalid("invalid ACME contact or directory URL".to_owned()));
     }
-    require_file(&acme.cloudflare_token_file, "Cloudflare token")
+    require_file(&acme.cloudflare_token_file, "Cloudflare token")?;
+    let mode = fs::metadata(&acme.cloudflare_token_file)
+        .map_err(|error| ConfigError::Invalid(error.to_string()))?
+        .mode()
+        & 0o777;
+    if mode & 0o400 == 0 || mode & 0o077 != 0 {
+        return Err(ConfigError::Invalid(format!(
+            "Cloudflare token must be owner-readable with no group/other access, got {mode:04o}"
+        )));
+    }
+    Ok(())
 }
 
 fn require_file(path: &Utf8Path, kind: &str) -> Result<(), ConfigError> {

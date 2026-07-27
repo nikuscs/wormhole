@@ -15,7 +15,8 @@ use crate::{
 };
 
 pub use crate::registry_types::{
-    Allocation, AllocationRequest, BindHandle, BindState, HostKey, RegistryError, SessionCommand,
+    Allocation, AllocationRequest, BindHandle, BindState, HostKey, HttpTunnelResponse,
+    RegistryError, SessionCommand, UpgradeTunnel,
 };
 
 const ADJECTIVES: &[&str] =
@@ -77,14 +78,74 @@ impl Registry {
         }
     }
 
+    /// Returns a snapshot of all public routes for administration.
+    pub fn routes(&self) -> Vec<(HostKey, Arc<BindHandle>)> {
+        self.routes.iter().map(|entry| (entry.key().clone(), Arc::clone(entry.value()))).collect()
+    }
+
+    /// Returns the number of reserved public routes.
+    pub fn len(&self) -> usize {
+        self.routes.len()
+    }
+
+    /// Returns whether the registry contains no routes.
+    pub fn is_empty(&self) -> bool {
+        self.routes.is_empty()
+    }
+
+    /// Notifies each connected session actor exactly once.
+    pub fn shutdown_sessions(&self) {
+        let mut senders = Vec::new();
+        for (_, handle) in self.routes() {
+            if let Some(sender) = handle.session()
+                && !senders.iter().any(|existing: &tokio::sync::mpsc::Sender<SessionCommand>| {
+                    existing.same_channel(&sender)
+                })
+            {
+                senders.push(sender);
+            }
+        }
+        for sender in senders {
+            let _sent = sender.try_send(SessionCommand::Shutdown);
+        }
+    }
+
+    /// Returns whether a hostname is a configured control apex.
+    pub fn is_domain(&self, hostname: &str) -> bool {
+        self.domains.iter().any(|domain| domain == hostname)
+    }
+
     /// Looks up a route without holding the map lock across later awaits.
     pub fn get(&self, key: &HostKey) -> Option<Arc<BindHandle>> {
         self.routes.get(key).map(|entry| Arc::clone(entry.value()))
     }
 
+    /// Lists TCP routes for listener restoration at startup.
+    pub fn tcp_routes(&self) -> Vec<(u16, Arc<BindHandle>)> {
+        self.routes
+            .iter()
+            .filter_map(|entry| match entry.key() {
+                HostKey::TcpPort(port) => Some((*port, Arc::clone(entry.value()))),
+                HostKey::Hostname(_) => None,
+            })
+            .collect()
+    }
+
+    /// Looks up a route by stable bind identifier.
+    pub fn get_bind(&self, bind: Uuid) -> Option<Arc<BindHandle>> {
+        self.by_bind(bind).ok()
+    }
+
     /// Atomically flips a pending bind online.
-    pub fn activate(&self, bind: Uuid) -> Result<(), RegistryError> {
+    pub fn activate(
+        &self,
+        bind: Uuid,
+        session: &tokio::sync::mpsc::Sender<SessionCommand>,
+    ) -> Result<(), RegistryError> {
         let handle = self.by_bind(bind)?;
+        if !handle.session().is_some_and(|owner| owner.same_channel(session)) {
+            return Err(RegistryError::SessionOwnerMismatch(bind));
+        }
         let mut state = handle.state.write();
         if *state != BindState::Pending {
             return Err(RegistryError::InvalidState { bind, state: *state });
@@ -124,6 +185,9 @@ impl Registry {
         buffer: Option<BufferPolicy>,
         auth: Option<EdgeAuth>,
     ) -> Result<Allocation, RegistryError> {
+        if persist == Persistence::Temporary && buffer.is_some() {
+            return Err(RegistryError::TemporaryBufferPolicy);
+        }
         let domain = self.select_domain(domain.as_deref())?;
         if let Some(host) = host {
             validate_label(&host)?;
@@ -234,6 +298,7 @@ impl Registry {
             persist,
             buffer_policy,
             auth,
+            auth_verifier: RwLock::new(None),
             spec,
             endpoint,
             state: RwLock::new(BindState::Pending),
@@ -268,14 +333,20 @@ impl Registry {
         if handle.key_fpr != request.key_fpr {
             return Err(RegistryError::ReservationOwnerMismatch);
         }
-        if handle.state() == BindState::Online {
-            return Err(RegistryError::AlreadyOnline(bind));
-        }
         if !spec_kind_matches(&handle.spec, &request.spec) {
             return Err(RegistryError::ReservationKindMismatch);
         }
+        let mut state = handle.state.write();
+        match *state {
+            BindState::Offline => {}
+            BindState::Online => return Err(RegistryError::AlreadyOnline(bind)),
+            pending @ BindState::Pending => {
+                return Err(RegistryError::InvalidState { bind, state: pending });
+            }
+        }
         *handle.session_tx.write() = Some(request.session_tx);
-        *handle.state.write() = BindState::Pending;
+        *state = BindState::Pending;
+        drop(state);
         Ok(Allocation {
             bind,
             urls: vec![self.url_for(&handle.endpoint)],
@@ -286,6 +357,7 @@ impl Registry {
 
     fn insert_persisted(&self, bind_id: Uuid, bind: PersistedBind) -> Result<(), RegistryError> {
         let key = host_key(&bind.endpoint);
+        let auth_verifier = bind.auth_verifier.clone();
         let persist = match bind.spec {
             PersistedBindSpec::Http { persist, .. } | PersistedBindSpec::Tcp { persist, .. } => {
                 persist
@@ -301,6 +373,7 @@ impl Registry {
             persist,
             buffer_policy,
             auth: None,
+            auth_verifier: RwLock::new(auth_verifier),
             spec: bind.spec,
             endpoint: bind.endpoint,
             state: RwLock::new(BindState::Offline),

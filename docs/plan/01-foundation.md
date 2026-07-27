@@ -92,6 +92,7 @@ later stage only adds code, never build scaffolding.
   rustls-pki-types = "1.15"
   rcgen = "0.14"
   instant-acme = "0.8"
+  x509-parser = "0.18" # certificate expiry inspection for ACME renewal
   tokio-tungstenite = { version = "0.30", features = ["rustls-tls-webpki-roots"] }
   # http
   hyper = { version = "1.11", features = ["full"] }
@@ -103,7 +104,7 @@ later stage only adds code, never build scaffolding.
   utoipa = { version = "5", features = ["axum_extras", "uuid"] }   # verify latest major
   utoipa-axum = "0.2"                                              # verify latest
   utoipa-scalar = { version = "0.3", features = ["axum"] }         # verify latest
-  reqwest = { version = "0.13", default-features = false, features = ["json", "rustls"] }
+  reqwest = { version = "0.13", default-features = false, features = ["json", "query", "rustls"] }
   # crypto / identity
   ed25519-dalek = { version = "3", features = ["rand_core", "pkcs8"] }
   sha2 = "0.10"             # key fingerprints (P3), share-link HMAC (W8 uses hmac too)

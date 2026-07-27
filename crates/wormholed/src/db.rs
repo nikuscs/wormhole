@@ -1,6 +1,6 @@
 //! Typed redb schema, persistence accessors, and crash-safe migrations.
 
-use std::{fs, io};
+use std::{fs, io, os::unix::fs::PermissionsExt};
 
 use camino::{Utf8Path, Utf8PathBuf};
 use jiff::Timestamp;
@@ -31,12 +31,15 @@ impl RelayDb {
     pub fn open(data_dir: &Utf8Path) -> Result<Self, DbError> {
         fs::create_dir_all(data_dir)
             .map_err(|source| DbError::Io { path: data_dir.to_owned(), source })?;
+        set_mode(data_dir, 0o700)?;
         let path = data_dir.join("state.redb");
         if !path.exists() {
             let database = Database::create(&path).map_err(redb_error)?;
+            set_mode(&path, 0o600)?;
             initialize_schema(&database, CURRENT_SCHEMA)?;
             return Ok(Self { database, path });
         }
+        set_mode(&path, 0o600)?;
         let database = Database::create(&path).map_err(redb_error)?;
         let schema = read_schema(&database)?;
         drop(database);
@@ -292,6 +295,11 @@ fn decode_optional<T: DeserializeOwned>(
     value: Option<redb::AccessGuard<'_, &[u8]>>,
 ) -> Result<Option<T>, DbError> {
     value.map(|guard| decode(guard.value())).transpose()
+}
+
+fn set_mode(path: &Utf8Path, mode: u32) -> Result<(), DbError> {
+    fs::set_permissions(path, fs::Permissions::from_mode(mode))
+        .map_err(|source| DbError::Io { path: path.to_owned(), source })
 }
 
 fn redb_error(error: impl std::fmt::Display) -> DbError {

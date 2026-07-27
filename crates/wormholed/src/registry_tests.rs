@@ -1,5 +1,5 @@
 use tokio::sync::mpsc;
-use wormhole_proto::frames::{BindSpec, Persistence};
+use wormhole_proto::frames::{BindSpec, BufferPolicy, Persistence};
 
 use super::{AllocationRequest, BindState, HostKey, Registry, RegistryError};
 use crate::config::PortRange;
@@ -94,11 +94,35 @@ fn reservation_rejects_other_key_and_online_duplicate() {
         registry.allocate(reclaim_request("attacker", reservation)),
         Err(RegistryError::ReservationOwnerMismatch)
     ));
-    registry.activate(allocation.bind).expect("pending bind must activate");
+    assert!(matches!(
+        registry.allocate(reclaim_request("owner", reservation)),
+        Err(RegistryError::InvalidState { state: BindState::Pending, .. })
+    ));
+    let (other, _receiver) = mpsc::channel(1);
+    assert!(matches!(
+        registry.activate(allocation.bind, &other),
+        Err(RegistryError::SessionOwnerMismatch(bind)) if bind == allocation.bind
+    ));
+    let session = registry.get_bind(allocation.bind).expect("bind").session().expect("session");
+    registry.activate(allocation.bind, &session).expect("pending bind must activate");
     assert!(matches!(
         registry.allocate(reclaim_request("owner", reservation)),
         Err(RegistryError::AlreadyOnline(bind)) if bind == allocation.bind
     ));
+}
+
+#[test]
+fn temporary_http_bind_rejects_buffer_policy() {
+    let registry = registry();
+    let mut request = http_request("owner", Some("demo"), None);
+    request.spec = BindSpec::Http {
+        host: Some("demo".to_owned()),
+        domain: None,
+        persist: Persistence::Temporary,
+        buffer: Some(BufferPolicy { max_requests: 1, max_body_bytes: 1024, ttl_secs: 60 }),
+        auth: None,
+    };
+    assert!(matches!(registry.allocate(request), Err(RegistryError::TemporaryBufferPolicy)));
 }
 
 #[test]

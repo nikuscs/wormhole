@@ -1,6 +1,6 @@
 //! Authorized-key import, management, and fail-closed policy decisions.
 
-use std::{fs, sync::Arc};
+use std::{fs, os::unix::fs::PermissionsExt, sync::Arc};
 
 use camino::{Utf8Path, Utf8PathBuf};
 use jiff::Timestamp;
@@ -58,6 +58,8 @@ impl AuthStore {
     /// Imports previously unseen entries from `*.pub` files.
     pub fn import_directory(&self, directory: &Utf8Path) -> Result<usize, AuthzError> {
         fs::create_dir_all(directory)
+            .map_err(|source| AuthzError::Io { path: directory.to_owned(), source })?;
+        fs::set_permissions(directory, fs::Permissions::from_mode(0o700))
             .map_err(|source| AuthzError::Io { path: directory.to_owned(), source })?;
         let mut imported = 0;
         for entry in fs::read_dir(directory)

@@ -6,8 +6,9 @@ mod output;
 
 use std::process::ExitCode;
 
-fn main() -> ExitCode {
-    match cli::run() {
+#[tokio::main]
+async fn main() -> ExitCode {
+    match cli::run().await {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
             output::error(&error);

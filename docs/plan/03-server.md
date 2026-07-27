@@ -121,7 +121,7 @@ the numbering groups by topic, not by execution order.
   KeyDecision { Allowed { name, limits } | Revoked | Unknown }` — this is the callback P4's
   `ServerHandshake` takes. Validation: unit tests incl. revoked key.
 
-- [ ] **S4 — QUIC listener + session actor** (`quic.rs`, `session.rs`).
+- [x] **S4 — QUIC listener + session actor** (`quic.rs`, `session.rs`).
   - quinn `Endpoint` with rustls `ServerConfig` from `CertManager` (S6), ALPN `wormhole/1`,
     transport: keep-alive 15s, idle timeout 60s. **Startup order:** CertManager must have the
     default domain's cert ready (loaded or issued) **before** the QUIC socket binds — in
@@ -167,7 +167,7 @@ the numbering groups by topic, not by execution order.
   Validation: conflict, reclaim-by-reservation, hostname-only reclaim rejection, Online
   duplicate rejection, other-key reservation rejection, unknown domain, and range exhaustion.
 
-- [ ] **S6 — CertManager** (`certs.rs`, `acme.rs`). Wildcard-only strategy — since domains are
+- [x] **S6 — CertManager** (`certs.rs`, `acme.rs`). Wildcard-only strategy — since domains are
   server-decided, one wildcard (+apex) cert per configured domain covers every bind; there is
   **no per-hostname issuance** (avoids Let's Encrypt rate limits and the fact that rustls'
   `ResolvesServerCert` is synchronous and cannot await an ACME order mid-handshake).
@@ -187,7 +187,7 @@ the numbering groups by topic, not by execution order.
   vs apex vs unknown; acme-dns01 flow gets an **ignored** e2e test (needs pebble + fake DNS;
   wire it in stage 08, leave `#[ignore = "requires pebble"]` now).
 
-- [ ] **S7 — Edges** (`edge_https.rs`, `edge_http.rs`, `edge_tcp.rs`).
+- [x] **S7 — Edges** (`edge_https.rs`, `edge_http.rs`, `edge_tcp.rs`).
   - :443: `tokio_rustls::TlsAcceptor` + Hyper HTTP/1.1. TLS ALPN advertises **`http/1.1`
     only**; no SNI is rejected, Host must equal SNI on every request or receive 421, and ECH is
     unsupported/not advertised. Hyper strips hop-by-hop headers, preserves duplicate/end-to-end
@@ -211,7 +211,7 @@ the numbering groups by topic, not by execution order.
   self-signed certs; curl-equivalent request through, bytes match; offline persistent bind
   returns 503.
 
-- [ ] **S8 — Admin API, observability + shutdown.**
+- [x] **S8 — Admin API, observability + shutdown.**
   - **Local admin API** (`admin.rs`): axum over UDS at `data_dir/admin.sock` (0600, owner =
     service user; same flock/socket hygiene rules as the client daemon, stage 05). Routes:
     `GET /v1/status` (uptime, sessions, binds, streams, cert expiries), `GET /v1/binds`,
@@ -230,7 +230,7 @@ the numbering groups by topic, not by execution order.
   Validation: run serve in self-signed mode → `wormholed status --json` (via socket) shows a
   live session; SIGTERM exits < 35s with drain log lines; admin socket mode/ownership test.
 
-- [ ] **S9 — Deploy assets.** `deploy/wormholed.service` (systemd: `DynamicUser=yes`,
+- [x] **S9 — Deploy assets.** `deploy/wormholed.service` (systemd: `DynamicUser=yes`,
   `AmbientCapabilities=CAP_NET_BIND_SERVICE`, `StateDirectory=wormhole`,
   `ProtectSystem=strict`, restart on-failure), `deploy/Dockerfile` (distroless static build),
   `docs/server-setup.md`: DNS records needed (`A tun.example.com`, `A *.tun.example.com`),
@@ -239,6 +239,7 @@ the numbering groups by topic, not by execution order.
   `wormholed init` + authorize first key.
   Validation: `docker build -f deploy/Dockerfile .` succeeds; systemd unit passes
   `systemd-analyze verify` if available (skip on macOS with a note).
+  > VALIDATION NOTE: Docker build was waived by the user because the configured daemon is unavailable; `systemd-analyze` is not installed on macOS.
 
 ## Acceptance gate
 

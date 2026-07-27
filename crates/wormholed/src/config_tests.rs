@@ -1,4 +1,4 @@
-use std::fs;
+use std::{fs, os::unix::fs::PermissionsExt};
 
 use camino::Utf8Path;
 use tempfile::tempdir;
@@ -19,6 +19,11 @@ fn initialized_config_loads_and_validates() {
     assert!(config.server.data_dir.is_dir());
     assert!(config.auth.authorized_keys.is_dir());
     assert!(fs::read_to_string(path).expect("config must read").starts_with('#'));
+    assert_eq!(fs::metadata(path).expect("config metadata").permissions().mode() & 0o777, 0o600);
+    assert_eq!(
+        fs::metadata(&config.server.data_dir).expect("data metadata").permissions().mode() & 0o777,
+        0o700
+    );
 }
 
 #[test]
@@ -44,6 +49,11 @@ fn invalid_tcp_range_is_rejected() {
     let error = config.validate().expect_err("reversed range must fail");
 
     assert!(error.to_string().contains("port_range"));
+
+    config.tcp.port_range.start = 10_000;
+    config.server.public_https_port = Some(0);
+    let error = config.validate().expect_err("zero public port must fail");
+    assert!(error.to_string().contains("public_https_port"));
 }
 
 #[test]

@@ -39,6 +39,11 @@ impl<S: AsyncRead + AsyncWrite + Unpin> ControlChannel<S> {
         self.framed.send(Bytes::from(encoded)).await.map_err(ProtoError::Io)
     }
 
+    /// Gracefully closes the write half after flushing queued frames.
+    pub async fn close(&mut self) -> Result<(), ProtoError> {
+        self.framed.close().await.map_err(ProtoError::Io)
+    }
+
     /// Receives and decodes one control frame.
     pub async fn recv(&mut self) -> Result<ControlFrame, ProtoError> {
         match self.framed.next().await {

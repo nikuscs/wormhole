@@ -1,11 +1,17 @@
 //! Public routing records, allocation requests, and registry errors.
 
+use bytes::Bytes;
 use parking_lot::RwLock;
-use tokio::sync::mpsc;
+use tokio::{
+    net::TcpStream,
+    sync::{mpsc, oneshot},
+};
 use uuid::Uuid;
-use wormhole_proto::frames::{BindSpec, BufferPolicy, EdgeAuth, Persistence};
+use wormhole_proto::frames::{
+    BindSpec, BufferPolicy, EdgeAuth, HttpResponseHead, Persistence, StreamHeader,
+};
 
-use crate::db::{PersistedBindSpec, PersistedEndpoint};
+use crate::db::{AuthVerifier, PersistedBindSpec, PersistedEndpoint};
 
 /// Lookup key used by HTTP and TCP edges.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -30,8 +36,53 @@ pub enum BindState {
 /// Commands sent from an edge to the owning session actor.
 #[derive(Debug)]
 pub enum SessionCommand {
-    /// Relay shutdown notification; stream variants are added by S4/S7.
+    /// Opens one logical HTTP request stream to the client.
+    OpenHttp {
+        /// Typed request metadata.
+        header: StreamHeader,
+        /// Bounded streaming request-body channel.
+        body: mpsc::Receiver<Result<Bytes, String>>,
+        /// Whether a 101 response should retain the stream bidirectionally.
+        upgrade: bool,
+        /// Response head and bounded body channel.
+        reply: oneshot::Sender<Result<HttpTunnelResponse, String>>,
+    },
+    /// Opens one raw TCP stream to the client.
+    OpenTcp {
+        /// Typed TCP connection metadata.
+        header: StreamHeader,
+        /// Accepted public TCP connection.
+        stream: TcpStream,
+    },
+    /// Removes a bind deleted through the administration API from session ownership.
+    RemoveBind {
+        /// Stable bind identifier.
+        bind: Uuid,
+    },
+    /// Relay shutdown notification.
     Shutdown,
+}
+
+/// Response returned from a client-opened HTTP target.
+#[derive(Debug)]
+pub struct HttpTunnelResponse {
+    /// Typed response metadata.
+    pub head: HttpResponseHead,
+    /// Bounded streaming response-body channel.
+    pub body: mpsc::Receiver<Result<Bytes, String>>,
+    /// Raw QUIC stream retained after a 101 response.
+    pub upgrade: Option<UpgradeTunnel>,
+}
+
+/// Raw bidirectional QUIC stream retained for an HTTP upgrade.
+#[derive(Debug)]
+pub struct UpgradeTunnel {
+    /// Notifies the session actor when the upgraded stream is released.
+    pub(crate) release: tokio::sync::oneshot::Sender<()>,
+    /// Bytes from the local target to the public client.
+    pub recv: quinn::RecvStream,
+    /// Bytes from the public client to the local target.
+    pub send: quinn::SendStream,
 }
 
 /// Shared routing record for one public endpoint.
@@ -46,6 +97,8 @@ pub struct BindHandle {
     pub buffer_policy: Option<BufferPolicy>,
     /// Raw in-memory edge policy; never persisted or serialized by this type.
     pub auth: Option<EdgeAuth>,
+    /// Persistable verification material used after relay restarts.
+    pub(crate) auth_verifier: RwLock<Option<AuthVerifier>>,
     /// Sanitized requested bind specification.
     pub spec: PersistedBindSpec,
     /// Allocated public endpoint.
@@ -59,6 +112,16 @@ impl BindHandle {
     /// Returns the current routing state.
     pub fn state(&self) -> BindState {
         *self.state.read()
+    }
+
+    /// Returns persisted edge-auth verification material, if configured.
+    pub(crate) fn auth_verifier(&self) -> Option<AuthVerifier> {
+        self.auth_verifier.read().clone()
+    }
+
+    /// Replaces persisted edge-auth verification material.
+    pub(crate) fn set_auth_verifier(&self, verifier: Option<AuthVerifier>) {
+        *self.auth_verifier.write() = verifier;
     }
 
     /// Returns a clone of the active session channel, if connected.
@@ -113,6 +176,9 @@ pub enum RegistryError {
     /// No TCP port remains available.
     #[error("TCP port range is exhausted")]
     PortRangeExhausted,
+    /// Offline buffering requires a persistent HTTP reservation.
+    #[error("buffer policy requires a persistent HTTP bind")]
+    TemporaryBufferPolicy,
     /// Random hostname attempts were exhausted.
     #[error("hostname allocation attempts exhausted")]
     AllocationExhausted,
@@ -131,6 +197,9 @@ pub enum RegistryError {
     /// Bind identifier is unknown.
     #[error("unknown bind: {0}")]
     UnknownBind(Uuid),
+    /// Bind transition came from a session that does not own the route.
+    #[error("bind is owned by another session: {0}")]
+    SessionOwnerMismatch(Uuid),
     /// State transition is invalid.
     #[error("bind {bind} has invalid state {state:?}")]
     InvalidState { bind: Uuid, state: BindState },
