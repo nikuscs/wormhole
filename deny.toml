@@ -1,5 +1,5 @@
 [advisories]
-unmaintained = "deny"
+unmaintained = "all"
 
 [licenses]
 allow = [

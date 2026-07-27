@@ -103,7 +103,7 @@ later stage only adds code, never build scaffolding.
   utoipa = { version = "5", features = ["axum_extras", "uuid"] }   # verify latest major
   utoipa-axum = "0.2"                                              # verify latest
   utoipa-scalar = { version = "0.3", features = ["axum"] }         # verify latest
-  reqwest = { version = "0.13", default-features = false, features = ["json", "rustls-tls"] }
+  reqwest = { version = "0.13", default-features = false, features = ["json", "rustls"] }
   # crypto / identity
   ed25519-dalek = { version = "3", features = ["rand_core", "pkcs8"] }
   sha2 = "0.10"             # key fingerprints (P3), share-link HMAC (W8 uses hmac too)
