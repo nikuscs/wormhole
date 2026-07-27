@@ -90,7 +90,7 @@ authorized_keys = "/etc/wormhole/authorized_keys"   # dir of *.pub files, WH for
 S4 *wires together* the registry (S5) and CertManager (S6), so build those components first —
 the numbering groups by topic, not by execution order.
 
-- [ ] **S1 — Config + CLI shell.** `config.rs` with serde + `validate()` (domain is a DNS name,
+- [x] **S1 — Config + CLI shell.** `config.rs` with serde + `validate()` (domain is a DNS name,
   ranges sane, static mode requires cert+key paths that exist). `main.rs` subcommands:
   `serve [--config path]`, `init` (writes a commented default config + creates dirs),
   `key authorize <pubkey-or-file> --name <n>`, `key ls [--json]`, `key revoke <fingerprint>`,
@@ -98,7 +98,7 @@ the numbering groups by topic, not by execution order.
   Validation: `wormholed init --config /tmp/w.toml && wormholed serve --config /tmp/w.toml
   --check` parses and validates without binding sockets (`--check` flag = validate & exit 0).
 
-- [ ] **S2 — redb schema** (`db.rs`). Tables (all keys/values serde_json bytes unless noted):
+- [x] **S2 — redb schema** (`db.rs`). Tables (all keys/values serde_json bytes unless noted):
 
   | table | key | value |
   |---|---|---|
@@ -113,7 +113,7 @@ the numbering groups by topic, not by execution order.
   Typed accessor fns only — no raw table access outside `db.rs`. Validation: CRUD tests plus
   old-schema migration, backup creation, and newer-schema refusal.
 
-- [ ] **S3 — Auth store** (`authz.rs`). redb `keys` is the sole authority. On first sight,
+- [x] **S3 — Auth store** (`authz.rs`). redb `keys` is the sole authority. On first sight,
   import `authorized_keys/*.pub` entries that have no redb row; an existing allowed/revoked row
   always wins, so a revoked file cannot silently re-authorize on restart. `key authorize` and
   `key revoke` update redb atomically; the directory is an import surface, not live policy.
@@ -146,7 +146,7 @@ the numbering groups by topic, not by execution order.
   binds, gets `Bound`, proves traffic is rejected while Pending, sends `BindReady`, receives
   `BindActive`, then serves through `https://<name>.<domain>`.
 
-- [ ] **S5 — Registry + hostname allocation** (`registry.rs`).
+- [x] **S5 — Registry + hostname allocation** (`registry.rs`).
   - `domain` in spec must be one of `server.domains` (None → first); anything else →
     `BindError`. Clients can never bind a hostname outside the configured domains — there is
     **no** custom-domain-per-key mechanism; adding a domain is a server-config + DNS + cert

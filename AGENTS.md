@@ -31,7 +31,7 @@ may proceed in parallel after Stage 02.
 - `unsafe` is forbidden. Clippy all, pedantic, nursery, and cargo lints are enforced as warnings,
   with CI treating warnings as errors.
 - Never use `todo!`, `unimplemented!`, `dbg!`, or direct printing.
-- `crates/wormhole-cli/src/output.rs` is the only module allowed to print; all commands honor its
+- Each binary may print only through its dedicated `output.rs`; all commands honor the shared
   human/JSON format contract.
 - Unit tests live in sibling `*_tests.rs` files referenced with `#[cfg(test)]` and `#[path = ...]`.
   Never add inline `mod tests { ... }` blocks.

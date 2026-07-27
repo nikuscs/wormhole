@@ -232,8 +232,9 @@ later stage only adds code, never build scaffolding.
   Validation: `cargo build --workspace` and `cargo clippy --all-targets -- -D warnings` pass.
 
 - [x] **F4 — CLI output module (lint escape hatch).** `crates/wormhole-cli/src/output.rs`:
-  the **only** place allowed to print. Everything user-visible goes through it, and it owns the
-  `--json` contract used by every command.
+  the client binary's **only** place allowed to print. Everything user-visible goes through it,
+  and it owns the `--json` contract used by every client command. The independent `wormholed`
+  binary gets the same dedicated-module escape hatch when its CLI is created in Stage 03 S1.
 
   ```rust
   //! All terminal output. The only module allowed to print.

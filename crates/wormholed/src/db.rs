@@ -1,0 +1,320 @@
+//! Typed redb schema, persistence accessors, and crash-safe migrations.
+
+use std::{fs, io};
+
+use camino::{Utf8Path, Utf8PathBuf};
+use jiff::Timestamp;
+use redb::{Database, Durability, ReadableDatabase, ReadableTable, TableDefinition};
+use serde::{Serialize, de::DeserializeOwned};
+use uuid::Uuid;
+
+pub use crate::db_models::{
+    AuthVerifier, AuthorizedKey, FailedWebhook, PersistedBind, PersistedBindSpec, PersistedEndpoint,
+};
+
+const CURRENT_SCHEMA: u64 = 1;
+const META: TableDefinition<&str, u64> = TableDefinition::new("meta");
+const BINDS: TableDefinition<&[u8], &[u8]> = TableDefinition::new("binds");
+const KEYS: TableDefinition<&str, &[u8]> = TableDefinition::new("keys");
+const WEBHOOK_BUFFER: TableDefinition<&[u8], &[u8]> = TableDefinition::new("webhook_buffer");
+const WEBHOOK_FAILED: TableDefinition<&[u8], &[u8]> = TableDefinition::new("webhook_failed");
+const SCHEMA_VERSION_KEY: &str = "schema_version";
+
+/// Typed handle to relay persistence.
+pub struct RelayDb {
+    database: Database,
+    path: Utf8PathBuf,
+}
+
+impl RelayDb {
+    /// Opens the relay database, migrating older schemas before use.
+    pub fn open(data_dir: &Utf8Path) -> Result<Self, DbError> {
+        fs::create_dir_all(data_dir)
+            .map_err(|source| DbError::Io { path: data_dir.to_owned(), source })?;
+        let path = data_dir.join("state.redb");
+        if !path.exists() {
+            let database = Database::create(&path).map_err(redb_error)?;
+            initialize_schema(&database, CURRENT_SCHEMA)?;
+            return Ok(Self { database, path });
+        }
+        let database = Database::create(&path).map_err(redb_error)?;
+        let schema = read_schema(&database)?;
+        drop(database);
+        if schema > CURRENT_SCHEMA {
+            return Err(DbError::NewerSchema { found: schema, supported: CURRENT_SCHEMA });
+        }
+        if schema < CURRENT_SCHEMA {
+            migrate(&path, data_dir, schema)?;
+        }
+        let database = Database::create(&path).map_err(redb_error)?;
+        Ok(Self { database, path })
+    }
+
+    /// Returns the database file path.
+    pub fn path(&self) -> &Utf8Path {
+        &self.path
+    }
+
+    /// Inserts or replaces a persistent bind atomically.
+    pub fn put_bind(&self, id: Uuid, bind: &PersistedBind) -> Result<(), DbError> {
+        let encoded = encode(bind)?;
+        let mut transaction = self.database.begin_write().map_err(redb_error)?;
+        transaction.set_durability(Durability::Immediate).map_err(redb_error)?;
+        {
+            let mut table = transaction.open_table(BINDS).map_err(redb_error)?;
+            table.insert(id.as_bytes().as_slice(), encoded.as_slice()).map_err(redb_error)?;
+        }
+        transaction.commit().map_err(redb_error)
+    }
+
+    /// Reads one persistent bind.
+    pub fn get_bind(&self, id: Uuid) -> Result<Option<PersistedBind>, DbError> {
+        let transaction = self.database.begin_read().map_err(redb_error)?;
+        let table = transaction.open_table(BINDS).map_err(redb_error)?;
+        decode_optional(table.get(id.as_bytes().as_slice()).map_err(redb_error)?)
+    }
+
+    /// Lists all persistent binds.
+    pub fn list_binds(&self) -> Result<Vec<(Uuid, PersistedBind)>, DbError> {
+        let transaction = self.database.begin_read().map_err(redb_error)?;
+        let table = transaction.open_table(BINDS).map_err(redb_error)?;
+        let mut binds = Vec::new();
+        for entry in table.iter().map_err(redb_error)? {
+            let (key, value) = entry.map_err(redb_error)?;
+            let id =
+                Uuid::from_slice(key.value()).map_err(|error| DbError::Data(error.to_string()))?;
+            binds.push((id, decode(value.value())?));
+        }
+        Ok(binds)
+    }
+
+    /// Deletes a persistent bind.
+    pub fn delete_bind(&self, id: Uuid) -> Result<bool, DbError> {
+        let transaction = self.database.begin_write().map_err(redb_error)?;
+        let removed = {
+            let mut table = transaction.open_table(BINDS).map_err(redb_error)?;
+            table.remove(id.as_bytes().as_slice()).map_err(redb_error)?.is_some()
+        };
+        transaction.commit().map_err(redb_error)?;
+        Ok(removed)
+    }
+
+    /// Inserts or replaces an authorized-key record atomically.
+    pub fn put_key(&self, fingerprint: &str, key: &AuthorizedKey) -> Result<(), DbError> {
+        let encoded = encode(key)?;
+        let mut transaction = self.database.begin_write().map_err(redb_error)?;
+        transaction.set_durability(Durability::Immediate).map_err(redb_error)?;
+        {
+            let mut table = transaction.open_table(KEYS).map_err(redb_error)?;
+            table.insert(fingerprint, encoded.as_slice()).map_err(redb_error)?;
+        }
+        transaction.commit().map_err(redb_error)
+    }
+
+    /// Reads one authorized-key record.
+    pub fn get_key(&self, fingerprint: &str) -> Result<Option<AuthorizedKey>, DbError> {
+        let transaction = self.database.begin_read().map_err(redb_error)?;
+        let table = transaction.open_table(KEYS).map_err(redb_error)?;
+        decode_optional(table.get(fingerprint).map_err(redb_error)?)
+    }
+
+    /// Lists all authorized-key records.
+    pub fn list_keys(&self) -> Result<Vec<(String, AuthorizedKey)>, DbError> {
+        let transaction = self.database.begin_read().map_err(redb_error)?;
+        let table = transaction.open_table(KEYS).map_err(redb_error)?;
+        let mut keys = Vec::new();
+        for entry in table.iter().map_err(redb_error)? {
+            let (key, value) = entry.map_err(redb_error)?;
+            keys.push((key.value().to_owned(), decode(value.value())?));
+        }
+        Ok(keys)
+    }
+
+    /// Stores a buffered webhook payload.
+    pub fn put_buffered(&self, bind: Uuid, seq: u64, request: &[u8]) -> Result<(), DbError> {
+        self.put_raw(WEBHOOK_BUFFER, &buffer_key(bind, seq), request)
+    }
+
+    /// Reads a buffered webhook payload.
+    pub fn get_buffered(&self, bind: Uuid, seq: u64) -> Result<Option<Vec<u8>>, DbError> {
+        self.get_raw(WEBHOOK_BUFFER, &buffer_key(bind, seq))
+    }
+
+    /// Deletes a buffered webhook payload.
+    pub fn delete_buffered(&self, bind: Uuid, seq: u64) -> Result<bool, DbError> {
+        self.delete_raw(WEBHOOK_BUFFER, &buffer_key(bind, seq))
+    }
+
+    /// Stores a failed webhook record.
+    pub fn put_failed(&self, bind: Uuid, seq: u64, failed: &FailedWebhook) -> Result<(), DbError> {
+        self.put_raw(WEBHOOK_FAILED, &buffer_key(bind, seq), &encode(failed)?)
+    }
+
+    /// Reads a failed webhook record.
+    pub fn get_failed(&self, bind: Uuid, seq: u64) -> Result<Option<FailedWebhook>, DbError> {
+        self.get_raw(WEBHOOK_FAILED, &buffer_key(bind, seq))?
+            .map(|value| decode(&value))
+            .transpose()
+    }
+
+    fn put_raw(
+        &self,
+        definition: TableDefinition<&[u8], &[u8]>,
+        key: &[u8],
+        value: &[u8],
+    ) -> Result<(), DbError> {
+        let transaction = self.database.begin_write().map_err(redb_error)?;
+        {
+            let mut table = transaction.open_table(definition).map_err(redb_error)?;
+            table.insert(key, value).map_err(redb_error)?;
+        }
+        transaction.commit().map_err(redb_error)
+    }
+
+    fn get_raw(
+        &self,
+        definition: TableDefinition<&[u8], &[u8]>,
+        key: &[u8],
+    ) -> Result<Option<Vec<u8>>, DbError> {
+        let transaction = self.database.begin_read().map_err(redb_error)?;
+        let table = transaction.open_table(definition).map_err(redb_error)?;
+        Ok(table.get(key).map_err(redb_error)?.map(|value| value.value().to_vec()))
+    }
+
+    fn delete_raw(
+        &self,
+        definition: TableDefinition<&[u8], &[u8]>,
+        key: &[u8],
+    ) -> Result<bool, DbError> {
+        let transaction = self.database.begin_write().map_err(redb_error)?;
+        let removed = {
+            let mut table = transaction.open_table(definition).map_err(redb_error)?;
+            table.remove(key).map_err(redb_error)?.is_some()
+        };
+        transaction.commit().map_err(redb_error)?;
+        Ok(removed)
+    }
+}
+
+fn initialize_schema(database: &Database, version: u64) -> Result<(), DbError> {
+    let mut transaction = database.begin_write().map_err(redb_error)?;
+    transaction.set_durability(Durability::Immediate).map_err(redb_error)?;
+    {
+        transaction.open_table(BINDS).map_err(redb_error)?;
+        transaction.open_table(KEYS).map_err(redb_error)?;
+        transaction.open_table(WEBHOOK_BUFFER).map_err(redb_error)?;
+        transaction.open_table(WEBHOOK_FAILED).map_err(redb_error)?;
+        let mut meta = transaction.open_table(META).map_err(redb_error)?;
+        meta.insert(SCHEMA_VERSION_KEY, version).map_err(redb_error)?;
+    }
+    transaction.commit().map_err(redb_error)
+}
+
+fn read_schema(database: &Database) -> Result<u64, DbError> {
+    let transaction = database.begin_read().map_err(redb_error)?;
+    let table = match transaction.open_table(META) {
+        Ok(table) => table,
+        Err(redb::TableError::TableDoesNotExist(_)) => return Ok(0),
+        Err(error) => return Err(redb_error(error)),
+    };
+    Ok(table.get(SCHEMA_VERSION_KEY).map_err(redb_error)?.map_or(0, |value| value.value()))
+}
+
+fn migrate(path: &Utf8Path, data_dir: &Utf8Path, old: u64) -> Result<(), DbError> {
+    let backups = data_dir.join("backups");
+    fs::create_dir_all(&backups).map_err(|source| DbError::Io { path: backups.clone(), source })?;
+    let stamp = Timestamp::now().as_second();
+    let backup = backups.join(format!("state-v{old}-{stamp}.redb"));
+    copy_synced(path, &backup)?;
+    retain_latest_backups(&backups)?;
+    let temporary = data_dir.join(format!(".state-migrate-{stamp}.redb"));
+    copy_synced(path, &temporary)?;
+    let migrated = Database::create(&temporary).map_err(redb_error)?;
+    initialize_schema(&migrated, CURRENT_SCHEMA)?;
+    drop(migrated);
+    fs::rename(&temporary, path).map_err(|source| DbError::Io { path: path.to_owned(), source })?;
+    FileSync::directory(data_dir)?;
+    Ok(())
+}
+
+fn retain_latest_backups(directory: &Utf8Path) -> Result<(), DbError> {
+    let mut backups = fs::read_dir(directory)
+        .map_err(|source| DbError::Io { path: directory.to_owned(), source })?
+        .filter_map(Result::ok)
+        .filter(|entry| entry.file_name().to_string_lossy().starts_with("state-v"))
+        .collect::<Vec<_>>();
+    backups.sort_by_key(|entry| entry.metadata().and_then(|metadata| metadata.modified()).ok());
+    let remove_count = backups.len().saturating_sub(2);
+    for entry in backups.into_iter().take(remove_count) {
+        fs::remove_file(entry.path()).map_err(|source| DbError::Io {
+            path: Utf8PathBuf::from_path_buf(entry.path())
+                .unwrap_or_else(|path| Utf8PathBuf::from(path.to_string_lossy().as_ref())),
+            source,
+        })?;
+    }
+    Ok(())
+}
+
+fn copy_synced(source: &Utf8Path, destination: &Utf8Path) -> Result<(), DbError> {
+    fs::copy(source, destination)
+        .map_err(|error| DbError::Io { path: destination.to_owned(), source: error })?;
+    fs::File::open(destination)
+        .and_then(|file| file.sync_all())
+        .map_err(|source| DbError::Io { path: destination.to_owned(), source })
+}
+
+struct FileSync;
+
+impl FileSync {
+    fn directory(path: &Utf8Path) -> Result<(), DbError> {
+        fs::File::open(path)
+            .and_then(|file| file.sync_all())
+            .map_err(|source| DbError::Io { path: path.to_owned(), source })
+    }
+}
+
+fn buffer_key(bind: Uuid, seq: u64) -> [u8; 24] {
+    let mut key = [0_u8; 24];
+    key[..16].copy_from_slice(bind.as_bytes());
+    key[16..].copy_from_slice(&seq.to_be_bytes());
+    key
+}
+
+fn encode<T: Serialize>(value: &T) -> Result<Vec<u8>, DbError> {
+    serde_json::to_vec(value).map_err(|error| DbError::Data(error.to_string()))
+}
+
+fn decode<T: DeserializeOwned>(value: &[u8]) -> Result<T, DbError> {
+    serde_json::from_slice(value).map_err(|error| DbError::Data(error.to_string()))
+}
+
+fn decode_optional<T: DeserializeOwned>(
+    value: Option<redb::AccessGuard<'_, &[u8]>>,
+) -> Result<Option<T>, DbError> {
+    value.map(|guard| decode(guard.value())).transpose()
+}
+
+fn redb_error(error: impl std::fmt::Display) -> DbError {
+    DbError::Redb(error.to_string())
+}
+
+/// Relay persistence failure.
+#[derive(Debug, thiserror::Error)]
+pub enum DbError {
+    /// redb operation failed.
+    #[error("redb operation failed: {0}")]
+    Redb(String),
+    /// Serialized data was invalid.
+    #[error("invalid persisted data: {0}")]
+    Data(String),
+    /// Filesystem operation failed.
+    #[error("database filesystem operation failed for {path}: {source}")]
+    Io { path: Utf8PathBuf, source: io::Error },
+    /// Database schema was created by a newer relay.
+    #[error("database schema {found} is newer than supported schema {supported}")]
+    NewerSchema { found: u64, supported: u64 },
+}
+
+#[cfg(test)]
+#[path = "db_tests.rs"]
+mod tests;
