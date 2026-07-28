@@ -1,0 +1,24 @@
+services:
+  wormholed:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    image: ghcr.io/nikuscs/wormholed:local
+    restart: unless-stopped
+    volumes:
+      - ./wormholed.container.toml:/etc/wormhole/wormholed.toml:ro
+      - wormhole-state:/var/lib/wormhole
+    ports:
+      - "80:80/tcp"
+      - "443:443/tcp"
+      - "443:443/udp"
+      - "10000-20000:10000-20000/tcp"
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/wormholed", "status", "--json", "--require-online"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+      start_period: 10s
+
+volumes:
+  wormhole-state:

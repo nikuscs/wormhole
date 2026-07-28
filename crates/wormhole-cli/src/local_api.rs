@@ -50,7 +50,10 @@ impl Modify for SecurityAddon {
 }
 
 #[derive(OpenApi)]
-#[openapi(modifiers(&SecurityAddon), paths(
+#[openapi(
+    info(description = "Local daemon API for Wormhole automation"),
+    modifiers(&SecurityAddon),
+    paths(
     crate::api_status::status,
     services,
     create_service,

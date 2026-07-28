@@ -87,3 +87,6 @@ wormhole key show --json
 
 Use exit codes in automation: `0` success, `2` usage, `3` daemon unavailable, `4` denied,
 `5` no endpoint ready, and `6` partial endpoint readiness.
+
+See the [local API](local-api.md), [configuration reference](config-reference.md), and
+[provider behavior](providers.md).

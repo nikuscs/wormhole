@@ -11,7 +11,8 @@ Buffering is opt-in for persistent HTTP endpoints:
 ```toml
 [[service]]
 name = "stripe"
-target = 3000
+target = "3000"
+proto = "http"
 
 [[service.endpoint]]
 driver = "wormhole"
@@ -62,3 +63,6 @@ Basic, bearer, and signed-link checks happen at the relay before proxying or buf
 links exchange the expiring token for a Secure, HttpOnly, SameSite=Lax host-wide cookie and
 redirect without the token. Webhook providers that cannot authenticate at the HTTP layer should
 omit edge auth and continue verifying provider signatures in the application.
+
+See the [configuration reference](config-reference.md), [local API](local-api.md), and
+[agent integration](agents.md).

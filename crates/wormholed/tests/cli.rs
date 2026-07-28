@@ -24,6 +24,20 @@ fn init_then_serve_check_succeeds() {
 }
 
 #[test]
+fn status_can_require_a_running_relay() {
+    let directory = tempdir().expect("temporary directory");
+    let config = directory.path().join("wormholed.toml");
+    cargo_bin_cmd!("wormholed").args(["init", "--config"]).arg(&config).assert().success();
+
+    cargo_bin_cmd!("wormholed")
+        .args(["status", "--json", "--require-online", "--config"])
+        .arg(&config)
+        .assert()
+        .failure()
+        .stderr(contains("relay is offline"));
+}
+
+#[test]
 fn key_commands_persist_authorization_and_revocation() {
     let directory = tempdir().expect("temporary directory");
     let config = directory.path().join("wormholed.toml");

@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "wormholed",
-    "description": "",
+    "description": "Self-hosted relay server for Wormhole",
     "license": {
       "name": "MIT",
       "identifier": "MIT"

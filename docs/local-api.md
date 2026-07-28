@@ -74,3 +74,6 @@ Successful responses are JSON. Errors use a stable envelope and appropriate HTTP
 
 Timestamps, when present, are RFC 3339 values generated with `jiff`. The `/v1` contract is
 additive: existing fields and meanings are not changed.
+
+See [agent integration](agents.md), the [configuration reference](config-reference.md), and
+[webhook inspection and replay](webhooks.md).

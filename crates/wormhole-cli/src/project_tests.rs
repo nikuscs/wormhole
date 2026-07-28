@@ -4,6 +4,40 @@ use wormhole_proto::frames::Persistence;
 
 use super::{ProjectConfig, project_id};
 
+fn documented_project_blocks() -> Vec<(String, String)> {
+    let docs = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs");
+    let mut blocks = Vec::new();
+    for entry in fs::read_dir(docs).expect("read docs") {
+        let path = entry.expect("docs entry").path();
+        if path.extension().and_then(std::ffi::OsStr::to_str) != Some("md") {
+            continue;
+        }
+        let text = fs::read_to_string(&path).expect("read markdown");
+        let mut lines = text.lines();
+        while let Some(line) = lines.next() {
+            if line != "```toml" {
+                continue;
+            }
+            let block =
+                lines.by_ref().take_while(|line| *line != "```").collect::<Vec<_>>().join("\n");
+            if block.contains("[[service]]") {
+                blocks.push((path.display().to_string(), block));
+            }
+        }
+    }
+    blocks
+}
+
+#[test]
+fn documented_project_toml_blocks_parse() {
+    let blocks = documented_project_blocks();
+    assert!(!blocks.is_empty(), "project documentation must include TOML");
+    for (path, block) in blocks {
+        toml::from_str::<ProjectConfig>(&block)
+            .unwrap_or_else(|error| panic!("invalid project TOML in {path}: {error}"));
+    }
+}
+
 #[test]
 fn full_project_file_parses_policies_and_exact_id() {
     let directory = tempfile::tempdir().expect("tempdir");

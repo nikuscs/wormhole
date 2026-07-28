@@ -383,6 +383,7 @@ fn not_found(message: &str) -> AdminResponseError {
 
 #[derive(OpenApi)]
 #[openapi(
+    info(description = "Self-hosted relay server for Wormhole"),
     paths(
         status, list_binds, delete_bind, list_failed_webhooks, retry_failed_webhook,
         delete_failed_webhook, list_keys, authorize_key, revoke_key

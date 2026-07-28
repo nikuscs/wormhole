@@ -1,0 +1,386 @@
+# Generated from cargo-dist v0.32 and extended for Wormhole's guarded release process.
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version_bump:
+        description: Version bump type
+        required: true
+        default: patch
+        type: choice
+        options: [patch, minor, major]
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions: {}
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -Dwarnings
+  DIST_VERSION: "0.32.0"
+
+jobs:
+  checks:
+    name: Checks
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.97"
+          components: rustfmt, clippy
+      - name: Install build and policy tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang cmake
+          cargo install cargo-deny --locked
+          cargo install cargo-audit --locked
+      - uses: Swatinem/rust-cache@v2
+      - name: Check version calculation without writes
+        run: scripts/test-release-version.sh
+      - name: Format
+        run: cargo fmt --all -- --check
+      - name: Clippy
+        run: cargo clippy --all-targets --locked -- -D warnings
+      - name: Test
+        run: cargo test --workspace --locked
+      - name: Dependency policy
+        run: cargo deny check
+      - name: Security audit
+        run: cargo audit
+
+  prepare:
+    name: Bump version and create tag
+    needs: checks
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+      sha: ${{ steps.commit.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Verify default branch head
+        run: |
+          test "${{ github.ref }}" = "refs/heads/main" || {
+            echo "::error::Release must be dispatched from main"
+            exit 1
+          }
+          git fetch origin main --tags
+          test "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)" || {
+            echo "::error::Checked-out commit is not the default branch head"
+            exit 1
+          }
+      - name: Calculate version
+        id: version
+        run: |
+          current=$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -1)
+          if [ "$current" = 0.0.0 ] && [ "${{ inputs.version_bump }}" != minor ]; then
+            echo "::error::The first release must use a minor bump and create v0.1.0"
+            exit 1
+          fi
+          version=$(scripts/calculate-version.sh "$current" "${{ inputs.version_bump }}")
+          if [ "$current" = 0.0.0 ] && [ "$version" != 0.1.0 ]; then
+            echo "::error::The first release must be exactly v0.1.0"
+            exit 1
+          fi
+          tag="v$version"
+          test -z "$(git tag --list "$tag")" || {
+            echo "::error::Tag $tag already exists"
+            exit 1
+          }
+          test -z "$(git ls-remote --tags origin "refs/tags/$tag")" || {
+            echo "::error::Tag $tag already exists on origin"
+            exit 1
+          }
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+      - name: Update workspace version and changelog
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          python3 - <<'PY'
+          import datetime
+          import os
+          import re
+          from pathlib import Path
+
+          version = os.environ["VERSION"]
+          cargo = Path("Cargo.toml")
+          cargo.write_text(re.sub(r'(?m)^version = "[^"]+"$', f'version = "{version}"', cargo.read_text(), count=1))
+          changelog = Path("CHANGELOG.md")
+          text = changelog.read_text()
+          heading = f"## [Unreleased]\n\n## [{version}] - {datetime.date.today().isoformat()}"
+          text = text.replace("## [Unreleased]", heading, 1)
+          text += f"\n[{version}]: https://github.com/nikuscs/wormhole/releases/tag/v{version}\n"
+          changelog.write_text(text)
+          PY
+          cargo check --workspace
+          test "$(cargo metadata --no-deps --format-version 1 | jq -r '[.packages[].version] | unique | join(" ")')" = "$VERSION"
+      - name: Commit and tag
+        id: commit
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Cargo.toml Cargo.lock CHANGELOG.md
+          git commit -m "chore: release ${{ steps.version.outputs.tag }} [skip ci]"
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          git tag -a "${{ steps.version.outputs.tag }}" -m "Release ${{ steps.version.outputs.tag }}"
+          git push --atomic origin HEAD:main "${{ steps.version.outputs.tag }}"
+
+  plan:
+    name: Plan cargo-dist release
+    needs: prepare
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: read
+    outputs:
+      manifest: ${{ steps.plan.outputs.manifest }}
+      tag: ${{ needs.prepare.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.prepare.outputs.tag }}
+          persist-credentials: false
+      - name: Install dist
+        shell: bash
+        run: curl --proto '=https' --tlsv1.2 -LsSf "https://github.com/axodotdev/cargo-dist/releases/download/v${DIST_VERSION}/cargo-dist-installer.sh" | sh
+      - name: Cache dist
+        uses: actions/upload-artifact@v7
+        with:
+          name: cargo-dist-cache
+          path: ~/.cargo/bin/dist
+      - id: plan
+        run: |
+          dist host --steps=create --tag="${{ needs.prepare.outputs.tag }}" --output-format=json > plan.json
+          echo "manifest=$(jq -c . plan.json)" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: artifacts-plan-dist-manifest
+          path: plan.json
+
+  build-local-artifacts:
+    name: Build (${{ join(matrix.targets, ', ') }})
+    needs: [prepare, plan]
+    if: ${{ fromJson(needs.plan.outputs.manifest).ci.github.artifacts_matrix.include != null }}
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.plan.outputs.manifest).ci.github.artifacts_matrix }}
+    runs-on: ${{ matrix.runner }}
+    container: ${{ matrix.container && matrix.container.image || null }}
+    environment: release
+    permissions:
+      contents: read
+    env:
+      BUILD_MANIFEST_NAME: target/distrib/${{ join(matrix.targets, '-') }}-dist-manifest.json
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.prepare.outputs.tag }}
+          persist-credentials: false
+      - name: Install Rust in build container
+        if: ${{ matrix.container }}
+        run: |
+          if ! command -v cargo >/dev/null 2>&1; then
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+            echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          fi
+      - name: Install dist
+        run: ${{ matrix.install_dist.run }}
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: artifacts-*
+          path: target/distrib
+          merge-multiple: true
+      - name: Install build dependencies
+        run: ${{ matrix.packages_install }}
+      - name: Build with cargo-dist
+        run: dist build --tag="${{ needs.prepare.outputs.tag }}" --print=linkage --output-format=json ${{ matrix.dist_args }} > dist-manifest.json
+      - name: Sign and notarize macOS archives
+        if: runner.os == 'macOS'
+        shell: bash
+        env:
+          CERTIFICATE_P12: ${{ secrets.MACOS_CERTIFICATE_P12 }}
+          CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+        run: |
+          set -euo pipefail
+          for name in CERTIFICATE_P12 CERTIFICATE_PASSWORD APPLE_ID APPLE_TEAM_ID APPLE_APP_PASSWORD; do
+            test -n "${!name:-}" || { echo "::error::$name is required in the release environment"; exit 1; }
+          done
+          keychain="$RUNNER_TEMP/release.keychain-db"
+          password=$(openssl rand -hex 24)
+          security create-keychain -p "$password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$password" "$keychain"
+          printf '%s' "$CERTIFICATE_P12" | base64 --decode > "$RUNNER_TEMP/certificate.p12"
+          security import "$RUNNER_TEMP/certificate.p12" -k "$keychain" -P "$CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$password" "$keychain" >/dev/null
+          identity=$(security find-identity -v -p codesigning "$keychain" | awk '/Developer ID Application/ {print $2; exit}')
+          test -n "$identity" || { echo "::error::Developer ID Application identity not found"; exit 1; }
+          found=0
+          for archive in target/distrib/*-apple-darwin.zip; do
+            test -f "$archive" || continue
+            found=1
+            archive="$(pwd)/$archive"
+            dir=$(mktemp -d)
+            ditto -x -k "$archive" "$dir"
+            while IFS= read -r binary; do
+              codesign --force --options runtime --timestamp --sign "$identity" "$binary"
+              codesign --verify --strict --verbose=2 "$binary"
+            done < <(find "$dir" -type f \( -name wormhole -o -name wormholed \))
+            rm "$archive"
+            (cd "$dir" && zip -qry "$archive" .)
+            result="$RUNNER_TEMP/$(basename "$archive").notary.json"
+            xcrun notarytool submit "$archive" --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" --password "$APPLE_APP_PASSWORD" --wait --output-format json > "$result"
+            test "$(jq -r .status "$result")" = Accepted || { cat "$result"; exit 1; }
+            checksum=$(shasum -a 256 "$archive" | awk '{print $1}')
+            printf '%s  %s\n' "$checksum" "$(basename "$archive")" > "$archive.sha256"
+            jq --arg name "$(basename "$archive")" --arg checksum "$checksum" \
+              '.artifacts[$name].checksums.sha256 = $checksum' dist-manifest.json > dist-manifest.signed.json
+            mv dist-manifest.signed.json dist-manifest.json
+            while IFS= read -r binary; do
+              spctl --assess --type execute --verbose=2 "$binary"
+            done < <(find "$dir" -type f \( -name wormhole -o -name wormholed \))
+            rm -rf "$dir"
+          done
+          test "$found" = 1 || { echo "::error::No macOS ZIP archives were built"; exit 1; }
+          xcrun notarytool history --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" --password "$APPLE_APP_PASSWORD" >/dev/null
+          rm -f "$RUNNER_TEMP/certificate.p12"
+          security delete-keychain "$keychain"
+      - id: artifacts
+        name: Collect cargo-dist outputs
+        shell: bash
+        run: |
+          {
+            echo "paths<<EOF"
+            dist print-upload-files-from-manifest --manifest dist-manifest.json
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+          cp dist-manifest.json "$BUILD_MANIFEST_NAME"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: artifacts-build-local-${{ join(matrix.targets, '_') }}
+          path: |
+            ${{ steps.artifacts.outputs.paths }}
+            ${{ env.BUILD_MANIFEST_NAME }}
+
+  build-global-artifacts:
+    name: Build global cargo-dist artifacts
+    needs: [prepare, plan, build-local-artifacts]
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: read
+    env:
+      BUILD_MANIFEST_NAME: target/distrib/global-dist-manifest.json
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.prepare.outputs.tag }}
+          persist-credentials: false
+      - uses: actions/download-artifact@v8
+        with:
+          name: cargo-dist-cache
+          path: ~/.cargo/bin
+      - run: chmod +x ~/.cargo/bin/dist
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: artifacts-*
+          path: target/distrib
+          merge-multiple: true
+      - id: artifacts
+        shell: bash
+        run: |
+          dist build --tag="${{ needs.prepare.outputs.tag }}" --output-format=json --artifacts=global > dist-manifest.json
+          {
+            echo "paths<<EOF"
+            jq -r '.upload_files[]' dist-manifest.json
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+          cp dist-manifest.json "$BUILD_MANIFEST_NAME"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: artifacts-build-global
+          path: |
+            ${{ steps.artifacts.outputs.paths }}
+            ${{ env.BUILD_MANIFEST_NAME }}
+
+  release:
+    name: Publish GitHub release
+    needs: [prepare, plan, build-local-artifacts, build-global-artifacts]
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.prepare.outputs.tag }}
+          persist-credentials: false
+      - uses: actions/download-artifact@v8
+        with:
+          name: cargo-dist-cache
+          path: ~/.cargo/bin
+      - run: chmod +x ~/.cargo/bin/dist
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: artifacts-*
+          path: target/distrib
+          merge-multiple: true
+      - id: host
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          dist host --tag="${{ needs.prepare.outputs.tag }}" --steps=upload --steps=release --output-format=json > dist-manifest.json
+          echo "manifest=$(jq -c . dist-manifest.json)" >> "$GITHUB_OUTPUT"
+      - name: Create GitHub release with cargo-dist artifacts
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TITLE: ${{ fromJson(steps.host.outputs.manifest).announcement_title }}
+          BODY: ${{ fromJson(steps.host.outputs.manifest).announcement_github_body }}
+        run: |
+          printf '%s' "$BODY" > "$RUNNER_TEMP/notes.md"
+          mkdir release-artifacts
+          find target/distrib -maxdepth 1 -type f ! -name '*.json' -exec cp {} release-artifacts/ \;
+          gh release create "${{ needs.prepare.outputs.tag }}" --target "${{ needs.prepare.outputs.sha }}" --title "$TITLE" --notes-file "$RUNNER_TEMP/notes.md" release-artifacts/*
+
+  container:
+    name: Publish GHCR image
+    needs: [prepare, release]
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.prepare.outputs.tag }}
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: deploy/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ghcr.io/nikuscs/wormholed:${{ needs.prepare.outputs.version }}
+            ghcr.io/nikuscs/wormholed:${{ needs.prepare.outputs.tag }}
+            ghcr.io/nikuscs/wormholed:latest

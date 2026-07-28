@@ -79,3 +79,6 @@ wormhole tcp 5432 --endpoint tailscale --public-port 5432
 
 `wormhole doctor` reports provider binary, version, login, and Tailscale daemon state. Tunnel
 creation repeats the same preflight and fails before making provider changes.
+
+See the [configuration reference](config-reference.md), [agent integration](agents.md), and
+[relay setup](server-setup.md).

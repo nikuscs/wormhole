@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "wormhole-cli",
-    "description": "",
+    "description": "Local daemon API for Wormhole automation",
     "license": {
       "name": "MIT",
       "identifier": "MIT"

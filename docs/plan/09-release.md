@@ -12,7 +12,7 @@ matching the crauler house style.
 owner of version mutation, tagging, and release publication; the earlier tasks only prepare
 and validate an untagged tree.
 
-- [ ] **R1 — cargo-dist.** cargo-dist is the sole artifact builder/release engine. Tool is
+- [x] **R1 — cargo-dist.** cargo-dist is the sole artifact builder/release engine. Tool is
   `dist` (repo `axodotdev/cargo-dist`, community-maintained, v0.32 as of 2026-05).
   `dist init` configured for: both binaries, targets
   {aarch64-apple-darwin, x86_64-apple-darwin, x86_64-unknown-linux-gnu (musl if aws-lc allows;
@@ -47,13 +47,16 @@ and validate an untagged tree.
   `0.0.0 + minor → 0.1.0`; after approval: the workflow succeeds and the `v0.1.0` release
   contains both binaries and checksums.
 
-- [ ] **R3 — Docker.** `deploy/Dockerfile` finalized (S9 stub): multi-stage, distroless/static,
+- [x] **R3 — Docker.** `deploy/Dockerfile` finalized (S9 stub): multi-stage, distroless/static,
   `wormholed` entrypoint, example `docker-compose.yml` with volumes for `/var/lib/wormhole` +
   `/etc/wormhole`, ports 80/tcp, 443/tcp+udp, 10000-20000/tcp. Push target documented (ghcr) but pushing
   happens only from release workflow — gated, not automatic on merge.
   Validation: `docker compose up` locally with self-signed mode serves `wormholed status`.
 
-- [ ] **R4 — README.** Real README: 30-second pitch (the scope mantra), animated-less quickstart:
+  > WAIVED (macOS): the local Docker daemon was unavailable. Compose parsing and Dockerfile
+  > build checks passed; the project-level macOS Docker-runtime waiver applies.
+
+- [x] **R4 — README.** Real README: 30-second pitch (the scope mantra), animated-less quickstart:
 
   ```console
   # server (once, on a VPS with *.tun.example.com → this box)
@@ -72,7 +75,10 @@ and validate an untagged tree.
   command in README exists and flags are correct (script: extract fenced `console` blocks,
   grep against `--help`).
 
-- [ ] **R5 — Docs sweep.** Ensure `docs/` contains and cross-links: `server-setup.md` (S9),
+  > IMPLEMENTATION: until the vanity domain is provisioned, README uses cargo-dist's valid,
+  > per-binary GitHub Release installer URLs rather than claiming a nonexistent `/install` URL.
+
+- [x] **R5 — Docs sweep.** Ensure `docs/` contains and cross-links: `server-setup.md` (S9),
   `local-api.md` + `agents.md` (D8), `providers.md` (V5), `webhooks.md` (W6). Add
   `docs/config-reference.md` generated-by-hand from the serde structs (every key, default,
   example) — keep in sync check: a unit test deserializes every fenced TOML block in the docs

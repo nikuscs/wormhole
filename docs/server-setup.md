@@ -58,9 +58,19 @@ Choose one TLS mode in `wormholed.toml`:
 
 Never place Cloudflare token contents or private keys in command arguments, logs, or the administration API. The HTTPS edge supports HTTP/1.1 ALPN only. Encrypted ClientHello (ECH) is not advertised or supported because relay routing and control-upgrade isolation require the configured SNI.
 
+## Release signing
+
+The manual GitHub release workflow uses the protected `release` environment. Configure
+`MACOS_CERTIFICATE_P12` (base64-encoded Developer ID Application certificate),
+`MACOS_CERTIFICATE_PASSWORD`, `APPLE_ID`, `APPLE_TEAM_ID`, and `APPLE_APP_PASSWORD` as environment
+secrets. The workflow signs and notarizes both macOS binaries before publishing their ZIPs; it
+never prints credential values. Do not dispatch it until the release commit is approved.
+
 ## Container
 
-Build the statically linked distroless image:
+Published releases include the multi-architecture distroless image
+`ghcr.io/nikuscs/wormholed:vX.Y.Z`. Image publication happens only in the manually dispatched
+release workflow. Build it locally with:
 
 ```sh
 docker build -f deploy/Dockerfile -t wormholed .
@@ -77,4 +87,13 @@ docker run --rm \
   wormholed
 ```
 
-Adjust `server.data_dir` and listener addresses for the container (`0.0.0.0`). Restrict the published forward range to the configured range.
+Adjust `server.data_dir` and listener addresses for the container (`0.0.0.0`). Restrict the
+published forward range to the configured range. The checked-in development example runs with a
+self-signed certificate:
+
+```sh
+docker compose -f deploy/docker-compose.yml up --build
+```
+
+Use `deploy/wormholed.container.toml` only for local testing; replace its domain and certificate
+mode before deployment. See the [configuration reference](config-reference.md) for every key.

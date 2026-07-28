@@ -6,7 +6,12 @@ use clap::{Args, Parser, Subcommand, ValueEnum};
 
 /// Wormhole exposes local services through one or more secure tunnel providers.
 #[derive(Debug, Parser)]
-#[command(name = "wormhole", version, about, propagate_version = true)]
+#[command(
+    name = "wormhole",
+    version,
+    about = "Wormhole exposes local services through one or more secure tunnel providers",
+    propagate_version = true
+)]
 pub struct Cli {
     /// Emit stable JSON instead of human-readable output.
     #[arg(long, global = true)]

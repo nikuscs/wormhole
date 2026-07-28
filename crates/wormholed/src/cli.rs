@@ -24,7 +24,7 @@ enum Command {
     /// Manage authorized client keys.
     Key(KeyArgs),
     /// Show relay health and counters.
-    Status(JsonArgs),
+    Status(StatusArgs),
     /// List or remove public binds without exposing reservation secrets.
     Binds(BindsArgs),
     /// Manage durable webhook queues.
@@ -43,6 +43,15 @@ struct JsonArgs {
     /// Emit stable machine-readable JSON.
     #[arg(long)]
     json: bool,
+}
+
+#[derive(Debug, Args)]
+struct StatusArgs {
+    #[arg(long)]
+    json: bool,
+    /// Fail instead of rendering the offline database state.
+    #[arg(long)]
+    require_online: bool,
 }
 
 #[derive(Debug, Args)]
@@ -350,7 +359,7 @@ fn read_public_input(input: &str) -> Result<String> {
         .ok_or_else(|| anyhow::anyhow!("public key file contains no key: {path}"))
 }
 
-async fn status(path: &Utf8Path, args: JsonArgs) -> Result<()> {
+async fn status(path: &Utf8Path, args: StatusArgs) -> Result<()> {
     use http::Method;
     let config = wormholed::config::WormholedConfig::load(path)?;
     let socket = config.server.data_dir.join("admin.sock");
@@ -364,6 +373,9 @@ async fn status(path: &Utf8Path, args: JsonArgs) -> Result<()> {
     {
         Ok(response) => response,
         Err(wormholed::admin_client::AdminClientError::Connect(_)) => {
+            if args.require_online {
+                anyhow::bail!("relay is offline");
+            }
             let database = wormholed::db::RelayDb::open(&config.server.data_dir)?;
             let offline = wormholed::admin::StatusResponse {
                 uptime_seconds: 0,
