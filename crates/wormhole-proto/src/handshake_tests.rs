@@ -3,7 +3,7 @@ use base64::{Engine as _, engine::general_purpose::STANDARD};
 use super::{ClientHandshake, HandshakeStep, KeyDecision, ServerHandshake};
 use crate::{
     ProtoError,
-    frames::{ControlFrame, DenyReason, Limits, PROTO_VERSION},
+    frames::{BindSpec, ControlFrame, DenyReason, EventKind, Limits, PROTO_VERSION, Persistence},
     keys::Identity,
 };
 
@@ -21,10 +21,50 @@ fn take_reply(step: HandshakeStep) -> ControlFrame {
 }
 
 #[test]
+fn every_control_frame_has_a_stable_protocol_name() {
+    let id = uuid::Uuid::nil();
+    let limits = limits();
+    let frames = vec![
+        ControlFrame::Hello { proto: 2, client: String::new(), pubkey: String::new() },
+        ControlFrame::Welcome { session: id, limits, motd: None },
+        ControlFrame::Denied { reason: DenyReason::UnknownKey },
+        ControlFrame::Bind {
+            request: id,
+            spec: BindSpec::Tcp { remote_port: None, persist: Persistence::Temporary },
+            reservation: None,
+        },
+        ControlFrame::Unbind { bind: id, forget: false },
+        ControlFrame::Unbound { bind: id },
+        ControlFrame::ForgetReservation { reservation: id },
+        ControlFrame::ForgotReservation { reservation: id },
+        ControlFrame::BindReady { bind: id },
+        ControlFrame::Bound {
+            request: id,
+            bind: id,
+            urls: Vec::new(),
+            persist: Persistence::Temporary,
+            reservation: None,
+            pending_buffered: 0,
+            failed_buffered: 0,
+        },
+        ControlFrame::BindError { request: id, reason: String::new() },
+        ControlFrame::BindActive { bind: id },
+        ControlFrame::BufferedStatus { bind: id, pending: 0, failed: 0 },
+        ControlFrame::Event { kind: EventKind::Info, msg: String::new() },
+        ControlFrame::AckBuffered { bind: id, seq: 0 },
+        ControlFrame::NackBuffered { bind: id, seq: 0, reason: String::new() },
+        ControlFrame::Pong { seq: 0 },
+    ];
+    for frame in frames {
+        assert!(!super::frame_name(&frame).is_empty());
+    }
+}
+
+#[test]
 fn client_and_server_complete_happy_path() {
     let identity = Identity::generate();
     let public_key = identity.public_base64();
-    let mut client = ClientHandshake::new(identity, "relay.example.com", "test-client");
+    let mut client = ClientHandshake::new(&identity, "relay.example.com", "test-client");
     let mut server = ServerHandshake::new(
         "relay.example.com",
         limits(),
@@ -51,9 +91,37 @@ fn client_and_server_complete_happy_path() {
 }
 
 #[test]
+fn malformed_challenge_nonce_fails_client_permanently() {
+    let identity = Identity::generate();
+    let mut client = ClientHandshake::new(&identity, "relay.example.com", "test-client");
+    let error = client
+        .step(&ControlFrame::Challenge {
+            nonce: "not-base64".to_owned(),
+            server: "relay.example.com".to_owned(),
+        })
+        .expect_err("invalid nonce");
+    assert!(matches!(error, ProtoError::Protocol(_)));
+    assert!(client.step(&ControlFrame::Ping { seq: 1 }).is_err());
+}
+
+#[test]
+fn revoked_and_limited_keys_receive_specific_denials() {
+    let identity = Identity::generate();
+    for (decision, expected) in
+        [(KeyDecision::Revoked, DenyReason::KeyRevoked), (KeyDecision::Limit, DenyReason::Limit)]
+    {
+        let client = ClientHandshake::new(&identity, "relay.example.com", "test-client");
+        let mut server =
+            ServerHandshake::new("relay.example.com", limits(), None, move |_| decision);
+        let step = server.step(&client.hello()).expect("denial");
+        assert!(matches!(step, HandshakeStep::Failed { reason, .. } if reason == expected));
+    }
+}
+
+#[test]
 fn unknown_key_is_denied() {
-    let mut client =
-        ClientHandshake::new(Identity::generate(), "relay.example.com", "unauthorized-client");
+    let identity = Identity::generate();
+    let mut client = ClientHandshake::new(&identity, "relay.example.com", "unauthorized-client");
     let mut server =
         ServerHandshake::new("relay.example.com", limits(), None, |_| KeyDecision::Unknown);
 
@@ -106,7 +174,8 @@ fn version_mismatch_carries_expected_version() {
 
 #[test]
 fn mismatched_server_name_aborts_without_signature() {
-    let mut client = ClientHandshake::new(Identity::generate(), "relay.example.com", "test-client");
+    let identity = Identity::generate();
+    let mut client = ClientHandshake::new(&identity, "relay.example.com", "test-client");
     let challenge = ControlFrame::Challenge {
         nonce: STANDARD.encode([9_u8; 32]),
         server: "attacker.example.com".to_owned(),
@@ -122,7 +191,7 @@ fn mismatched_server_name_aborts_without_signature() {
 fn bad_signature_is_denied() {
     let identity = Identity::generate();
     let public_key = identity.public_base64();
-    let client = ClientHandshake::new(identity, "relay.example.com", "test-client");
+    let client = ClientHandshake::new(&identity, "relay.example.com", "test-client");
     let mut server = ServerHandshake::new("relay.example.com", limits(), None, move |presented| {
         if presented == public_key { KeyDecision::Authorized } else { KeyDecision::Unknown }
     });

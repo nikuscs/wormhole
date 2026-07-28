@@ -143,8 +143,10 @@ pub async fn build_specs(
                 buffer: buffer.clone(),
                 auth: auth.clone(),
                 retry: retry.clone(),
-                inspect: !options.capture.no_inspect && config.defaults.inspect,
-                inspect_assets: options.capture.include_assets,
+                inspect: proto == ServiceProto::Http
+                    && !options.capture.no_inspect
+                    && config.defaults.inspect,
+                inspect_assets: proto == ServiceProto::Http && options.capture.include_assets,
                 capture_body_max: options.capture.capture_body_max,
                 reservation: None,
             })

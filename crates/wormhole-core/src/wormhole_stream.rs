@@ -6,7 +6,10 @@ use dashmap::DashMap;
 use http_body_util::{BodyExt, Full, combinators::UnsyncBoxBody};
 use hyper::{body::Frame, client::conn::http1};
 use hyper_util::rt::TokioIo;
-use tokio::sync::mpsc;
+use tokio::{
+    io::{AsyncRead, AsyncWrite, AsyncWriteExt as _},
+    sync::mpsc,
+};
 use wormhole_proto::{
     codec::{read_stream_header, write_response_head},
     frames::{HttpRequestHead, HttpResponseHead, StreamHeader},
@@ -17,11 +20,15 @@ use crate::{
     error::DriverError,
     wormhole_conn::{ConnCommand, EndpointHandle},
     wormhole_http::{build_request, request_is_upgrade, response_head},
-    wormhole_request_body::{request_body, request_body_with_prefix, retain_request_body},
+    wormhole_request_body::{
+        PublicReadError, request_body, request_body_with_prefix, retain_request_body,
+    },
     wormhole_retry_response::{forward_spooled_response, spool_retry_response},
 };
 
 pub type BoxError = Box<dyn Error + Send + Sync>;
+pub type BoxRead = Box<dyn AsyncRead + Unpin + Send>;
+pub type BoxWrite = Box<dyn AsyncWrite + Unpin + Send>;
 pub type ClientBody = UnsyncBoxBody<Bytes, BoxError>;
 
 struct CaptureSink<'a> {
@@ -49,43 +56,50 @@ pub async fn accept_streams(
     binds: Arc<DashMap<uuid::Uuid, Arc<EndpointHandle>>>,
 ) {
     while let Ok((send, recv)) = connection.accept_bi().await {
-        tokio::spawn(accept_one_stream(send, recv, Arc::clone(&binds)));
+        tokio::spawn(accept_one_stream(Box::new(send), Box::new(recv), Arc::clone(&binds)));
+    }
+}
+
+pub async fn accept_mux_streams(
+    mut incoming: mpsc::Receiver<tokio::io::DuplexStream>,
+    binds: Arc<DashMap<uuid::Uuid, Arc<EndpointHandle>>>,
+) {
+    while let Some(stream) = incoming.recv().await {
+        let (recv, send) = tokio::io::split(stream);
+        tokio::spawn(accept_one_stream(Box::new(send), Box::new(recv), Arc::clone(&binds)));
     }
 }
 
 async fn accept_one_stream(
-    mut send: quinn::SendStream,
-    mut recv: quinn::RecvStream,
+    mut send: BoxWrite,
+    mut recv: BoxRead,
     binds: Arc<DashMap<uuid::Uuid, Arc<EndpointHandle>>>,
 ) {
     let Ok(Ok(header)) =
         tokio::time::timeout(std::time::Duration::from_secs(10), read_stream_header(&mut recv))
             .await
     else {
-        let _reset = send.reset(0_u32.into());
-        let _stopped = recv.stop(0_u32.into());
+        let _closed = send.shutdown().await;
         return;
     };
     let bind = match &header {
         StreamHeader::Http { bind, .. } | StreamHeader::Tcp { bind, .. } => *bind,
     };
     let Some(handle) = binds.get(&bind).map(|handle| Arc::clone(&handle)) else {
-        let _reset = send.reset(0_u32.into());
-        let _stopped = recv.stop(0_u32.into());
+        let _closed = send.shutdown().await;
         return;
     };
     dispatch_stream(send, recv, header, handle).await;
 }
 
 pub async fn dispatch_stream(
-    mut send: quinn::SendStream,
-    mut recv: quinn::RecvStream,
+    mut send: BoxWrite,
+    recv: BoxRead,
     header: StreamHeader,
     handle: Arc<EndpointHandle>,
 ) {
     let Ok(permit) = Arc::clone(&handle.semaphore).try_acquire_owned() else {
-        let _reset = send.reset(0_u32.into());
-        let _stopped = recv.stop(0_u32.into());
+        let _closed = send.shutdown().await;
         return;
     };
     let capture = if handle.inspect {
@@ -186,8 +200,8 @@ async fn handle_buffered_result(
 }
 
 async fn deliver_tcp(
-    send: quinn::SendStream,
-    recv: quinn::RecvStream,
+    send: BoxWrite,
+    recv: BoxRead,
     target: crate::model::ResolvedTarget,
 ) -> Result<(), DriverError> {
     let public = tokio::io::join(recv, send);
@@ -203,8 +217,8 @@ async fn deliver_tcp(
 }
 
 async fn deliver_http(
-    send: quinn::SendStream,
-    recv: quinn::RecvStream,
+    send: BoxWrite,
+    recv: BoxRead,
     head: HttpRequestHead,
     delivery: HttpDelivery<'_>,
 ) -> Result<u32, DriverError> {
@@ -243,12 +257,12 @@ async fn deliver_http(
 }
 
 async fn deliver_http_once(
-    send: quinn::SendStream,
+    send: BoxWrite,
     head: HttpRequestHead,
     target: crate::model::ResolvedTarget,
     capture: CaptureSink<'_>,
     body: ClientBody,
-    retained_recv: Option<quinn::RecvStream>,
+    retained_recv: Option<BoxRead>,
     upgrade: bool,
 ) -> Result<(), DriverError> {
     let (response, connection_task) = http_attempt(head, target, body, upgrade).await?;
@@ -278,7 +292,7 @@ async fn http_attempt(
 fn classify_send_error(error: hyper::Error) -> DriverError {
     let mut source = error.source();
     while let Some(current) = source {
-        if current.downcast_ref::<quinn::ReadError>().is_some() {
+        if current.downcast_ref::<PublicReadError>().is_some() {
             return DriverError::Transport(error.to_string());
         }
         source = current.source();
@@ -287,11 +301,11 @@ fn classify_send_error(error: hyper::Error) -> DriverError {
 }
 
 async fn forward_response(
-    mut send: quinn::SendStream,
+    mut send: BoxWrite,
     mut response: hyper::Response<hyper::body::Incoming>,
     _connection_task: AbortTask,
     capture: CaptureSink<'_>,
-    retained_recv: Option<quinn::RecvStream>,
+    retained_recv: Option<BoxRead>,
     upgrade: bool,
     deadline: Option<tokio::time::Instant>,
 ) -> Result<(), DriverError> {
@@ -333,12 +347,12 @@ async fn forward_response(
                 .map_err(|error| DriverError::Transport(error.to_string()))?;
         }
     }
-    let _finished = send.finish();
+    send.shutdown().await.map_err(|error| DriverError::Transport(error.to_string()))?;
     Ok(())
 }
 
 async fn deliver_http_with_retry(
-    mut send: quinn::SendStream,
+    mut send: BoxWrite,
     head: HttpRequestHead,
     target: crate::model::ResolvedTarget,
     capture: CaptureSink<'_>,
@@ -377,7 +391,9 @@ async fn deliver_http_with_retry(
                     Ok(response) if attempt + 1 == attempts => {
                         forward_spooled_response(&mut send, response, capture.capture.as_ref())
                             .await?;
-                        let _finished = send.finish();
+                        send.shutdown()
+                            .await
+                            .map_err(|error| DriverError::Transport(error.to_string()))?;
                         if buffered {
                             return Err(DriverError::LocalDelivery(
                                 "buffered local delivery returned repeated 5xx".to_owned(),
@@ -432,7 +448,7 @@ async fn next_response_frame(
     frame.transpose().map_err(|error| DriverError::LocalDelivery(error.to_string()))
 }
 
-async fn write_gateway_timeout(send: &mut quinn::SendStream) -> Result<(), DriverError> {
+async fn write_gateway_timeout(send: &mut BoxWrite) -> Result<(), DriverError> {
     let head =
         HttpResponseHead { status: 504, version: "HTTP/1.1".to_owned(), headers: Vec::new() };
     write_response_head(send, &head)
@@ -441,7 +457,7 @@ async fn write_gateway_timeout(send: &mut quinn::SendStream) -> Result<(), Drive
     send.write_all(b"Gateway Timeout")
         .await
         .map_err(|error| DriverError::Transport(error.to_string()))?;
-    let _finished = send.finish();
+    send.shutdown().await.map_err(|error| DriverError::Transport(error.to_string()))?;
     Ok(())
 }
 

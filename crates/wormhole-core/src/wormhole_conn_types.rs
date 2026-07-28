@@ -15,6 +15,10 @@ use crate::{
     wormhole_conn::ConnCommand,
 };
 
+#[cfg(test)]
+#[path = "wormhole_conn_types_tests.rs"]
+mod tests;
+
 pub struct EndpointHandle {
     pub target: ResolvedTarget,
     pub semaphore: Arc<Semaphore>,

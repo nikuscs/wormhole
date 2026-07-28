@@ -1,5 +1,9 @@
 [advisories]
 unmaintained = "all"
+ignore = [
+  # Transitive through netdev; no maintained compatible replacement is available.
+  "RUSTSEC-2024-0436",
+]
 
 [licenses]
 allow = [
@@ -12,6 +16,7 @@ allow = [
   "Unicode-3.0",
   "Zlib",
   "CDLA-Permissive-2.0",
+  "MPL-2.0",
 ]
 
 [bans]

@@ -89,12 +89,16 @@ fn router(state: AdminState) -> Router {
 #[utoipa::path(get, path = "/v1/status", responses((status = 200, body = StatusResponse)))]
 async fn status(State(admin): State<AdminState>) -> Json<StatusResponse> {
     let (sessions, _) = admin.state.totals();
+    let addresses = admin.state.listener_addresses();
     Json(StatusResponse {
         uptime_seconds: (jiff::Timestamp::now().as_second() - admin.state.started_at.as_second())
             .max(0),
         sessions,
         binds: admin.state.registry.len(),
         streams: admin.state.active_streams(),
+        quic_addr: addresses.map(|value| value.quic.to_string()),
+        https_addr: addresses.map(|value| value.https.to_string()),
+        http_addr: addresses.map(|value| value.http.to_string()),
         certificate_expiries: admin
             .certificates
             .expiries()
@@ -307,6 +311,9 @@ pub struct StatusResponse {
     pub sessions: u32,
     pub binds: usize,
     pub streams: u64,
+    pub quic_addr: Option<String>,
+    pub https_addr: Option<String>,
+    pub http_addr: Option<String>,
     pub certificate_expiries: Vec<CertificateExpiry>,
     pub certificate_error: Option<String>,
 }

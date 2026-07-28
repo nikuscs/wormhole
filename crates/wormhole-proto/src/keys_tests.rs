@@ -78,6 +78,27 @@ fn save_and_load_preserve_identity_with_private_modes() {
 }
 
 #[test]
+fn malformed_private_identity_forms_are_rejected() {
+    let directory = tempdir().expect("temporary directory");
+    let cases = [
+        "",
+        "wormhole-identity-v1 AAAA\nsecond",
+        "unsupported AAAA",
+        "wormhole-identity-v1",
+        "wormhole-identity-v1 AAAA extra",
+        "wormhole-identity-v1 !!!=",
+        "wormhole-identity-v1 AAAA",
+    ];
+    for (index, contents) in cases.into_iter().enumerate() {
+        let path = directory.path().join(format!("bad-{index}.key"));
+        fs::write(&path, contents).expect("write malformed identity");
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).expect("mode");
+        let path = Utf8Path::from_path(&path).expect("UTF-8 path");
+        assert!(matches!(Identity::load(path), Err(ProtoError::InvalidIdentity(_))));
+    }
+}
+
+#[test]
 fn load_rejects_world_readable_identity() {
     let directory = tempdir().expect("temporary directory");
     let key_path = directory.path().join("id.key");

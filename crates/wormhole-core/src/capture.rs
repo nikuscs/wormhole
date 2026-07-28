@@ -53,7 +53,7 @@ impl CaptureContext {
             },
             started: std::time::Instant::now(),
             request_max: usize::try_from(request_max).unwrap_or(usize::MAX),
-            request_complete: false,
+            request_complete: request_has_no_body(request),
             finished: false,
         }))))
     }
@@ -111,6 +111,18 @@ impl CaptureContext {
         delivery.clone_into(&mut state.captured.delivery);
         Some(state.captured.clone())
     }
+}
+
+fn request_has_no_body(request: &HttpRequestHead) -> bool {
+    let has_length = request.headers.iter().any(|header| {
+        header.name.eq_ignore_ascii_case("content-length")
+            && base64::engine::general_purpose::STANDARD
+                .decode(&header.value_b64)
+                .is_ok_and(|value| value != b"0")
+    });
+    let chunked =
+        request.headers.iter().any(|header| header.name.eq_ignore_ascii_case("transfer-encoding"));
+    !has_length && !chunked
 }
 
 fn append_bounded(target: &mut Vec<u8>, truncated: &mut bool, bytes: &[u8], limit: usize) {

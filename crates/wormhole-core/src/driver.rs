@@ -68,6 +68,10 @@ impl DriverCapabilities {
     }
 }
 
+#[cfg(test)]
+#[path = "driver_tests.rs"]
+mod tests;
+
 /// Lifecycle event emitted by a running driver.
 #[derive(Debug, Clone)]
 pub enum DriverEvent {

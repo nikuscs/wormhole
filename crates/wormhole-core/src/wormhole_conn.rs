@@ -24,26 +24,32 @@ use crate::{
     model::{EndpointSpec, EndpointStatus, ResolvedTarget},
     remotes::Remote,
     wormhole_bind::{bind_spec, should_forget_bind, should_forget_cancelled},
-    wormhole_stream::accept_streams,
-    wormhole_transport::{QuicIo, connect_remote},
+    wormhole_connect::{ConnectedTransport, connect_transport},
+    wormhole_stream::{accept_mux_streams, accept_streams},
+    wormhole_transport::BoxControlIo,
 };
 
 pub use crate::wormhole_conn_types::{BindLease, EndpointHandle};
 
 pub struct RemoteConn {
-    _endpoint: quinn::Endpoint,
-    commands: mpsc::Sender<ConnCommand>,
+    _endpoint: Option<quinn::Endpoint>,
+    pub(crate) commands: mpsc::Sender<ConnCommand>,
     closed: watch::Receiver<bool>,
 }
 
 impl RemoteConn {
     pub async fn connect(remote: &Remote, identity: Identity) -> Result<Arc<Self>, DriverError> {
-        let (endpoint, connection, channel, limits) = connect_remote(remote, identity).await?;
+        let ConnectedTransport { endpoint, connection, channel, limits, mux_streams } =
+            connect_transport(remote, identity).await?;
         let binds = Arc::new(DashMap::new());
         let (commands, command_rx) = mpsc::channel(128);
         let (closed_tx, closed) = watch::channel(false);
         let stream_slots = Arc::new(Semaphore::new(limits.max_streams as usize));
-        tokio::spawn(accept_streams(connection.clone(), Arc::clone(&binds)));
+        if let Some(connection) = &connection {
+            tokio::spawn(accept_streams(connection.clone(), Arc::clone(&binds)));
+        } else if let Some(streams) = mux_streams {
+            tokio::spawn(accept_mux_streams(streams, Arc::clone(&binds)));
+        }
         tokio::spawn(run_actor(
             connection,
             channel,
@@ -86,34 +92,6 @@ impl RemoteConn {
                 .map_err(|_| DriverError::Transport("remote connection closed".to_owned()))?,
             () = stop.cancelled() => Err(DriverError::Cancelled),
         }
-    }
-
-    pub async fn unbind(&self, bind: Uuid, forget: bool) -> Result<(), DriverError> {
-        let (reply, response) = oneshot::channel();
-        self.commands
-            .send(ConnCommand::Unbind { bind, forget, reply })
-            .await
-            .map_err(|_| DriverError::Transport("remote connection closed".to_owned()))?;
-        tokio::time::timeout(Duration::from_secs(5), response)
-            .await
-            .map_err(|_| DriverError::Transport("unbind acknowledgement timed out".to_owned()))?
-            .map_err(|_| DriverError::Transport("remote connection closed".to_owned()))
-    }
-
-    pub async fn forget_reservation(&self, reservation: Uuid) -> Result<(), DriverError> {
-        let (reply, response) = oneshot::channel();
-        self.commands
-            .send(ConnCommand::ForgetReservation { reservation, reply })
-            .await
-            .map_err(|_| DriverError::Transport("remote connection closed".to_owned()))?;
-        tokio::time::timeout(Duration::from_secs(5), response)
-            .await
-            .map_err(|_| DriverError::Transport("forget acknowledgement timed out".to_owned()))?
-            .map_err(|_| DriverError::Transport("remote connection closed".to_owned()))
-    }
-
-    pub async fn shutdown(&self) {
-        let _sent = self.commands.send(ConnCommand::Shutdown).await;
     }
 }
 
@@ -159,8 +137,8 @@ struct ActivatingBind {
 
 #[allow(clippy::too_many_arguments)]
 async fn run_actor(
-    connection: quinn::Connection,
-    mut channel: ControlChannel<QuicIo>,
+    connection: Option<quinn::Connection>,
+    mut channel: ControlChannel<BoxControlIo>,
     mut commands: mpsc::Receiver<ConnCommand>,
     command_tx: mpsc::Sender<ConnCommand>,
     binds: Arc<DashMap<Uuid, Arc<EndpointHandle>>>,
@@ -184,11 +162,13 @@ async fn run_actor(
     }
     binds.clear();
     closed_tx.send_replace(true);
-    connection.close(0_u32.into(), b"client connection closed");
+    if let Some(connection) = connection {
+        connection.close(0_u32.into(), b"client connection closed");
+    }
 }
 
 async fn control_loop(
-    channel: &mut ControlChannel<QuicIo>,
+    channel: &mut ControlChannel<BoxControlIo>,
     commands: &mut mpsc::Receiver<ConnCommand>,
     command_tx: &mpsc::Sender<ConnCommand>,
     binds: &DashMap<Uuid, Arc<EndpointHandle>>,
@@ -236,7 +216,7 @@ async fn control_loop(
 
 #[allow(clippy::too_many_arguments)]
 async fn handle_command(
-    channel: &mut ControlChannel<QuicIo>,
+    channel: &mut ControlChannel<BoxControlIo>,
     command: ConnCommand,
     command_tx: &mpsc::Sender<ConnCommand>,
     binds: &DashMap<Uuid, Arc<EndpointHandle>>,
@@ -312,7 +292,7 @@ async fn handle_command(
 
 #[allow(clippy::too_many_arguments)]
 async fn handle_frame(
-    channel: &mut ControlChannel<QuicIo>,
+    channel: &mut ControlChannel<BoxControlIo>,
     frame: ControlFrame,
     binds: &DashMap<Uuid, Arc<EndpointHandle>>,
     pending: &mut HashMap<Uuid, PendingBind>,
@@ -386,7 +366,7 @@ async fn handle_frame(
 }
 
 async fn handle_bound(
-    channel: &mut ControlChannel<QuicIo>,
+    channel: &mut ControlChannel<BoxControlIo>,
     details: (Uuid, Uuid, Vec<String>, Option<Uuid>, u32, u32),
     binds: &DashMap<Uuid, Arc<EndpointHandle>>,
     pending: &mut HashMap<Uuid, PendingBind>,
@@ -430,7 +410,7 @@ async fn handle_bound(
 }
 
 async fn handle_active(
-    channel: &mut ControlChannel<QuicIo>,
+    channel: &mut ControlChannel<BoxControlIo>,
     bind: Uuid,
     binds: &DashMap<Uuid, Arc<EndpointHandle>>,
     activating: &mut HashMap<Uuid, ActivatingBind>,
@@ -477,7 +457,7 @@ async fn handle_active(
 }
 
 async fn cancel_active(
-    channel: &mut ControlChannel<QuicIo>,
+    channel: &mut ControlChannel<BoxControlIo>,
     bind: Uuid,
     binds: &DashMap<Uuid, Arc<EndpointHandle>>,
     active: ActivatingBind,

@@ -16,7 +16,7 @@ use crate::{
 
 pub use crate::registry_types::{
     Allocation, AllocationRequest, BindHandle, BindState, HostKey, HttpTunnelResponse,
-    RegistryError, SessionCommand, UpgradeTunnel,
+    RegistryError, SessionCommand, TunnelRead, TunnelWrite, UpgradeTunnel,
 };
 
 const ADJECTIVES: &[&str] =

@@ -18,14 +18,14 @@ use crate::{
     authz::KeyLimits,
     db::{AuthVerifier, PersistedBind, PersistedEndpoint},
     registry::{AllocationRequest, RegistryError, SessionCommand},
-    session_streams::{spawn_http_stream, spawn_tcp_stream},
+    session_streams::{DataOpener, spawn_http_stream, spawn_tcp_stream},
     state::AppState,
 };
 
 /// Runs one authenticated client's control loop and bind lifecycle.
 pub struct SessionActor<S> {
     channel: ControlChannel<S>,
-    connection: quinn::Connection,
+    opener: DataOpener,
     command_rx: mpsc::Receiver<SessionCommand>,
     session_tx: mpsc::Sender<SessionCommand>,
     state: Arc<AppState>,
@@ -40,7 +40,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> SessionActor<S> {
     /// Creates an authenticated session actor.
     pub fn new(
         channel: ControlChannel<S>,
-        connection: quinn::Connection,
+        opener: DataOpener,
         state: Arc<AppState>,
         fingerprint: String,
         limits: KeyLimits,
@@ -50,7 +50,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> SessionActor<S> {
         let shutdown_rx = state.subscribe_shutdown();
         Self {
             channel,
-            connection,
+            opener,
             command_rx,
             session_tx,
             state,
@@ -104,7 +104,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> SessionActor<S> {
                         Some(SessionCommand::OpenHttp { header, body, upgrade, reply }) => {
                             match Arc::clone(&self.stream_slots).try_acquire_owned() {
                                 Ok(permit) => spawn_http_stream(
-                                    self.connection.clone(),
+                                    self.opener.clone(),
                                     Arc::clone(&self.state),
                                     permit,
                                     header,
@@ -120,7 +120,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> SessionActor<S> {
                         Some(SessionCommand::OpenTcp { header, stream }) => {
                             if let Ok(permit) = Arc::clone(&self.stream_slots).try_acquire_owned() {
                                 spawn_tcp_stream(
-                                    self.connection.clone(),
+                                    self.opener.clone(),
                                     Arc::clone(&self.state),
                                     permit,
                                     header,

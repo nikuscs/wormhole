@@ -54,17 +54,17 @@ enum ClientState {
 }
 
 /// Client side of the version 1 handshake.
-pub struct ClientHandshake {
-    identity: Identity,
+pub struct ClientHandshake<'a> {
+    identity: &'a Identity,
     server_name: String,
     client_name: String,
     state: ClientState,
 }
 
-impl ClientHandshake {
+impl<'a> ClientHandshake<'a> {
     /// Creates a client handshake bound to one configured relay name.
     pub fn new(
-        identity: Identity,
+        identity: &'a Identity,
         server_name: impl Into<String>,
         client_name: impl Into<String>,
     ) -> Self {

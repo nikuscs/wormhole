@@ -40,6 +40,7 @@ sysinfo.workspace = true
 thiserror.workspace = true
 tempfile.workspace = true
 tokio.workspace = true
+tokio-tungstenite.workspace = true
 tokio-util.workspace = true
 toml.workspace = true
 tracing.workspace = true
@@ -52,3 +53,4 @@ wormhole-proto = { path = "../wormhole-proto" }
 insta.workspace = true
 rcgen.workspace = true
 tempfile.workspace = true
+tokio-rustls.workspace = true

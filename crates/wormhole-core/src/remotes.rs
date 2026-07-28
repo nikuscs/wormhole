@@ -18,6 +18,8 @@ pub struct Remote {
     pub addr: String,
     /// TLS and handshake-bound server name.
     pub server_name: String,
+    /// Optional HTTPS authority for WebSocket fallback; defaults to `server_name:443`.
+    pub https_addr: Option<String>,
     /// Optional exclusive development CA root.
     #[schema(value_type = Option<String>)]
     pub trusted_ca: Option<Utf8PathBuf>,
@@ -39,6 +41,10 @@ pub enum Transport {
     Ws,
 }
 
+#[cfg(test)]
+#[path = "remotes_tests.rs"]
+mod tests;
+
 impl Remote {
     /// Creates a named-remote value for configuration editors.
     pub const fn new(addr: String, server_name: String, identity: Option<Utf8PathBuf>) -> Self {
@@ -46,6 +52,7 @@ impl Remote {
             transport: Transport::Auto,
             addr,
             server_name,
+            https_addr: None,
             trusted_ca: None,
             identity,
             extra: std::collections::BTreeMap::new(),
@@ -54,12 +61,21 @@ impl Remote {
 
     /// Resolves the configured UDP authority.
     pub async fn resolve_addr(&self) -> Result<SocketAddr, ConfigError> {
-        tokio::net::lookup_host(&self.addr)
-            .await
-            .map_err(|error| {
-                ConfigError::Invalid(format!("cannot resolve {}: {error}", self.addr))
-            })?
-            .next()
-            .ok_or_else(|| ConfigError::Invalid(format!("remote has no address: {}", self.addr)))
+        resolve_authority(&self.addr).await
     }
+
+    /// Resolves the configured HTTPS authority or the standard relay port.
+    pub async fn resolve_https_addr(&self) -> Result<SocketAddr, ConfigError> {
+        let authority =
+            self.https_addr.clone().unwrap_or_else(|| format!("{}:443", self.server_name));
+        resolve_authority(&authority).await
+    }
+}
+
+async fn resolve_authority(authority: &str) -> Result<SocketAddr, ConfigError> {
+    tokio::net::lookup_host(authority)
+        .await
+        .map_err(|error| ConfigError::Invalid(format!("cannot resolve {authority}: {error}")))?
+        .next()
+        .ok_or_else(|| ConfigError::Invalid(format!("remote has no address: {authority}")))
 }

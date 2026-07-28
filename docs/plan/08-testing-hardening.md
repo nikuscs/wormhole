@@ -8,7 +8,7 @@ project is functionally complete; stage 09 only packages it.
 
 ## Tasks
 
-- [ ] **H1 — e2e harness** (`crates/wormhole-e2e`). `harness.rs`:
+- [x] **H1 — e2e harness** (`crates/wormhole-e2e`). `harness.rs`:
   - Binary discovery: `cargo_bin("...")` does NOT build sibling packages — the harness runs
     `cargo build -p wormhole-cli -p wormholed` once per test-process (a `OnceLock` guard
     shelling out to `CARGO`), reads `target_directory` from `cargo metadata`, and uses its
@@ -26,7 +26,7 @@ project is functionally complete; stage 09 only packages it.
   Validation: the harness's own smoke test: relay starts, client binds, curl through edge hits
   echo, response matches.
 
-- [ ] **H2 — e2e matrix.** One test per scenario, all through real binaries:
+- [x] **H2 — e2e matrix.** One test per scenario, all through real binaries:
   1. http temporary: bind, hit, down, hit → 404.
   2. http persistent: bind, kill client daemon, hit → 503, restart daemon (auto-restore D2),
      hit → 200, hostname unchanged.
@@ -44,7 +44,7 @@ project is functionally complete; stage 09 only packages it.
       delivers later.
   Validation: `make e2e` green locally (macOS) and in CI (linux).
 
-- [ ] **H3 — WebSocket fallback transport.** For networks that drop UDP: client tries QUIC,
+- [x] **H3 — WebSocket fallback transport.** For networks that drop UDP: client tries QUIC,
   on timeout (3s) falls back to `wss://<server_name>:443/_wormhole/ws`. The relay's :443 edge
   upgrades to WS **only** when SNI/Host equals a configured relay domain's apex (never on
   tunnel hostnames — no collision with customer paths, control transport not exposed on every
@@ -69,7 +69,7 @@ project is functionally complete; stage 09 only packages it.
   cleanup, and starvation (one stalled channel doesn't block another); edge tests reject a
   wrong Origin and non-apex Host; e2e forcing `transport = "ws"` runs scenario H2.1 unchanged.
 
-- [ ] **H4 — Chaos.** In the harness: drop the relay (SIGKILL) → client endpoint goes
+- [x] **H4 — Chaos.** In the harness: drop the relay (SIGKILL) → client endpoint goes
   `Reconnecting`; restart it on the **same saved ports** → `Online`, persistent hostname
   reclaimed, new requests flow (gap < 15s). Kill -9 the client daemon → `wormhole status`
   auto-respawns and restores persistent services. Separately, kill the client daemon during an
@@ -77,38 +77,38 @@ project is functionally complete; stage 09 only packages it.
   process's fd count is stable across 100 iterations (`/proc/<pid>/fd` Linux, `lsof -p` macOS).
   Validation: chaos tests green 10/10 consecutive runs (`for i in $(seq 10)` script).
 
-- [ ] **H5 — Load smoke + perf guardrails.** Deterministic CI asserts zero errors for 1000
+- [x] **H5 — Load smoke + perf guardrails.** Deterministic CI asserts zero errors for 1000
   sequential + 100 concurrent requests and streams a 100MB body without buffering it whole.
   Local-only benchmark records p50/p95/p99 and peak RSS; suggested targets (p99 < 150ms,
   daemon RSS < 150MB) are report-only to avoid noisy CI failures. `criterion` covers codec and
   HTTP head encode/decode (tracked, not gated). Validation: functional tests green; bench compiles.
 
-- [ ] **H6 — Security checklist** (fix anything failing; record each as checked in this file):
-  - [ ] key files 0600, dirs 0700, socket 0600 — tested, not just coded (H2 addendum).
-  - [ ] server never logs request bodies or auth headers; grep-audit `tracing` calls.
-  - [ ] handshake rate-limit per IP effective (test: 31st handshake in a minute refused).
-  - [ ] max frame sizes enforced both sides (proto P2 + fuzz below).
-  - [ ] slowloris: edge header timeout test (open conn, send 1 byte/s → closed ≤ 15s).
-  - [ ] no `insecure`/`skip_verify` flag exists anywhere (`grep -ri "danger\|insecure" crates/`
+- [x] **H6 — Security checklist** (fix anything failing; record each as checked in this file):
+  - [x] key files 0600, dirs 0700, socket 0600 — tested, not just coded (H2 addendum).
+  - [x] server never logs request bodies or auth headers; grep-audit `tracing` calls.
+  - [x] handshake rate-limit per IP effective (test: 31st handshake in a minute refused).
+  - [x] max frame sizes enforced both sides (proto P2 + fuzz below).
+  - [x] slowloris: edge header timeout test (open conn, send 1 byte/s → closed ≤ 15s).
+  - [x] no `insecure`/`skip_verify` flag exists anywhere (`grep -ri "danger\|insecure" crates/`
         returns only `trusted_ca` docs).
-  - [ ] TCP forwards bind only configured range; binding outside refused.
-  - [ ] `cargo audit` and `cargo deny check` clean; both added to CI.
-  - [ ] daemon local API: no TCP listener exists; requests without the bearer token → 401;
+  - [x] TCP forwards bind only configured range; binding outside refused.
+  - [x] `cargo audit` and `cargo deny check` clean; both added to CI.
+  - [x] daemon local API: no TCP listener exists; requests without the bearer token → 401;
         stale-socket replacement happens only under the daemon flock.
-  - [ ] edge: no-SNI rejected; ALPN offers http/1.1 only; Host↔SNI mismatch → 421; ECH not
+  - [x] edge: no-SNI rejected; ALPN offers http/1.1 only; Host↔SNI mismatch → 421; ECH not
         advertised (documented unsupported).
-  - [ ] per-key limits enforced across sessions (2 sessions, same key, binds counted jointly).
-  - [ ] edge auth: constant-time compares; secrets never in logs; auth precedes buffering;
+  - [x] per-key limits enforced across sessions (2 sessions, same key, binds counted jointly).
+  - [x] edge auth: constant-time compares; secrets never in logs; auth precedes buffering;
         redb contains no raw basic/bearer secret; share tokens expire and cookies are secure.
-  - [ ] capture is memory-only, capped at 20 eligible exchanges/endpoint, ignores static assets
+  - [x] capture is memory-only, capped at 20 eligible exchanges/endpoint, ignores static assets
         by default, respects the 32 MiB global budget, and tests replay/body truncation.
-  - [ ] buffered webhook bodies capped, quota'd (per-key + global bytes) and TTL-pruned
+  - [x] buffered webhook bodies capped, quota'd (per-key + global bytes) and TTL-pruned
         (W2 tests cover; re-verify).
-- [ ] **H7 — Fuzz-ish.** In `wormhole-proto`, keep codec/frame proptests. In
+- [x] **H7 — Fuzz-ish.** In `wormhole-proto`, keep codec/frame proptests. In
   `crates/wormholed/tests/control_fuzz.rs`, feed the server's control-stream handler (pure async
   fn over `AsyncRead`) arbitrary bytes and mutated valid frames — wormholed depends on proto,
   never the reverse. Must never panic and must terminate cleanly. 60s proptest budget in CI.
-- [ ] **H8 — Coverage gate.** Per-package thresholds need per-package runs (a single
+- [x] **H8 — Coverage gate.** Per-package thresholds need per-package runs (a single
   `--workspace` invocation can't scope `--fail-under-lines`): CI runs
   `cargo llvm-cov -p wormhole-proto --fail-under-lines 75` and
   `cargo llvm-cov -p wormhole-core --fail-under-lines 75`, plus one

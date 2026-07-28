@@ -25,6 +25,18 @@ fn open_ack_fin_reset_sequence_is_enforced() {
 }
 
 #[test]
+fn per_channel_message_queue_is_bounded() {
+    let mut mux = MuxState::default();
+    mux.open(1).expect("open");
+    mux.acknowledge(1).expect("ack");
+    for _ in 0..super::MAX_QUEUED_MESSAGES_PER_CHANNEL {
+        mux.enqueue(1, vec![0]).expect("within queue limit");
+    }
+    assert_eq!(mux.enqueue(1, vec![0]), Err(MuxError::QueueFull));
+    assert_eq!(mux.acknowledge(1), Err(MuxError::UnknownChannel));
+}
+
+#[test]
 fn stalled_channel_does_not_starve_ready_channel() {
     let mut mux = MuxState::default();
     for channel in [1, 3] {

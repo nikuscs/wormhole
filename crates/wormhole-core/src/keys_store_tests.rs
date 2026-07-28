@@ -30,6 +30,18 @@ fn identity_is_generated_once_with_private_permissions() {
 }
 
 #[test]
+fn default_identity_rotation_replaces_key_and_reports_fingerprints() {
+    let directory = tempdir().expect("temporary directory");
+    let home = Utf8PathBuf::from_path_buf(directory.path().to_owned()).expect("UTF-8 home");
+    let store = IdentityStore::with_home(home);
+    let before = store.default_identity().expect("default").fingerprint();
+    let (old, new) = store.rotate_default().expect("rotate");
+    assert_eq!(old, before);
+    assert_ne!(new, old);
+    assert_eq!(store.default_identity().expect("rotated").fingerprint(), new);
+}
+
+#[test]
 fn remote_override_expands_home() {
     let directory = tempdir().expect("temporary directory");
     let home = Utf8PathBuf::from_path_buf(directory.path().to_owned()).expect("UTF-8 home");

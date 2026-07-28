@@ -1,7 +1,8 @@
-use http::{HeaderName, Version};
+use http::{HeaderName, Request, Version};
 
 use super::{
-    connection_tokens, hostname_from_authority, is_forwarding_header, is_hop_header, version_string,
+    connection_tokens, hostname_from_authority, is_forwarding_header, is_hop_header,
+    valid_websocket_request, version_string,
 };
 
 #[test]
@@ -20,6 +21,38 @@ fn edge_removes_hop_and_untrusted_forwarding_headers() {
         connection_tokens(["keep-alive, X-Private"].into_iter()),
         ["keep-alive", "x-private"]
     );
+}
+
+#[test]
+fn websocket_upgrade_rejects_wrong_origin_and_non_apex_host() {
+    assert!(valid_websocket_request(&websocket_request("wormhole.test", None), "wormhole.test"));
+    assert!(valid_websocket_request(
+        &websocket_request("wormhole.test", Some("https://wormhole.test")),
+        "wormhole.test"
+    ));
+    assert!(!valid_websocket_request(
+        &websocket_request("wormhole.test", Some("https://attacker.test")),
+        "wormhole.test"
+    ));
+    assert!(!valid_websocket_request(
+        &websocket_request("demo.wormhole.test", None),
+        "wormhole.test"
+    ));
+}
+
+fn websocket_request(host: &str, origin: Option<&str>) -> Request<()> {
+    let mut request = Request::builder()
+        .method("GET")
+        .uri("/_wormhole/ws")
+        .header("host", host)
+        .header("connection", "upgrade")
+        .header("upgrade", "websocket")
+        .header("sec-websocket-version", "13")
+        .header("sec-websocket-key", "dGhlIHNhbXBsZSBub25jZQ==");
+    if let Some(origin) = origin {
+        request = request.header("origin", origin);
+    }
+    request.body(()).expect("request")
 }
 
 #[test]

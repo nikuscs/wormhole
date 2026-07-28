@@ -42,6 +42,17 @@ async fn control_channel_round_trips_mixed_frames() {
 }
 
 #[tokio::test]
+async fn control_close_flushes_and_peer_observes_eof() {
+    let (client_io, server_io) = duplex(1024);
+    let mut sender = ControlChannel::new(client_io);
+    let mut receiver = ControlChannel::new(server_io);
+    sender.send(&ControlFrame::Ping { seq: 7 }).await.expect("send");
+    sender.close().await.expect("close");
+    assert!(matches!(receiver.recv().await, Ok(ControlFrame::Ping { seq: 7 })));
+    assert!(matches!(receiver.recv().await, Err(ProtoError::Closed)));
+}
+
+#[tokio::test]
 async fn oversized_control_frame_returns_explicit_error() {
     let (mut writer, reader) = duplex(16);
     let declared = u32::try_from(CONTROL_FRAME_LIMIT + 1).expect("limit fits u32");

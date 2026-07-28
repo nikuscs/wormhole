@@ -1162,6 +1162,13 @@
             "type": "string",
             "description": "UDP authority of the relay."
           },
+          "https_addr": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Optional HTTPS authority for WebSocket fallback; defaults to `server_name:443`."
+          },
           "identity": {
             "type": [
               "string",

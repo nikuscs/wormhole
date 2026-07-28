@@ -71,6 +71,44 @@ app = "127.0.0.4"
 }
 
 #[test]
+fn validation_rejects_invalid_remote_references_addresses_and_defaults() {
+    let mut config =
+        ClientConfig { default_remote: Some("missing".to_owned()), ..ClientConfig::default() };
+    assert!(config.validate().is_err());
+
+    config.default_remote = None;
+    let remote: crate::remotes::Remote =
+        toml::from_str("addr = \"localhost\"\nserver_name = \"localhost\"").expect("remote");
+    config.remotes.insert("bad".to_owned(), remote);
+    assert!(config.validate().is_err());
+
+    config.remotes.clear();
+    let empty_name: crate::remotes::Remote =
+        toml::from_str("addr = \"localhost:443\"\nserver_name = \"\"").expect("remote");
+    config.remotes.insert(String::new(), empty_name);
+    assert!(config.validate().is_err());
+
+    config.remotes.clear();
+    let ipv6: crate::remotes::Remote =
+        toml::from_str("addr = \"[::1]:443\"\nserver_name = \"localhost\"").expect("remote");
+    config.remotes.insert("ipv6".to_owned(), ipv6);
+    assert!(config.validate().is_ok());
+
+    config.remotes.clear();
+    config.defaults.drivers.clear();
+    assert!(config.validate().is_err());
+}
+
+#[test]
+fn malformed_optional_config_is_reported() {
+    let directory = tempfile::tempdir().expect("tempdir");
+    let path =
+        camino::Utf8PathBuf::from_path_buf(directory.path().join("config.toml")).expect("utf8");
+    std::fs::write(&path, "not = [valid").expect("write");
+    assert!(ClientConfig::load_from_paths(Some(&path), None, ConfigLayer::default()).is_err());
+}
+
+#[test]
 fn full_config_round_trips_with_snapshot() {
     let source = r#"default_remote = "myvps"
 

@@ -37,6 +37,9 @@ pub enum DriverError {
     /// Remote or local transport failed.
     #[error("driver transport failed: {0}")]
     Transport(String),
+    /// Relay authentication or authorization was denied permanently.
+    #[error("driver access denied: {0}")]
+    Denied(String),
     /// Protocol sequencing failed.
     #[error("driver protocol failed: {0}")]
     Protocol(String),

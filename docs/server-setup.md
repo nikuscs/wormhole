@@ -9,7 +9,17 @@ tun.example.com    A     203.0.113.10
 *.tun.example.com  A     203.0.113.10
 ```
 
-Allow inbound `80/tcp`, `443/tcp`, and `443/udp` (QUIC), plus the configured TCP-forward range (default `10000-20000/tcp`). All listener addresses and the forward range are configurable.
+Allow inbound `80/tcp`, `443/tcp`, and `443/udp` (QUIC), plus the configured TCP-forward range (default `10000-20000/tcp`). All listener addresses and the forward range are configurable. When UDP is unavailable, clients automatically fall back after three seconds to the authenticated WebSocket transport at `wss://tun.example.com/_wormhole/ws` on the apex domain.
+
+Client remotes accept `transport = "auto"` (default), `"quic"`, or `"ws"`. `addr` is the QUIC authority. WebSocket fallback uses `https_addr` when set, otherwise `server_name:443`.
+
+```toml
+[remotes.production]
+transport = "auto"
+addr = "tun.example.com:443"
+https_addr = "tun.example.com:443"
+server_name = "tun.example.com"
+```
 
 ## Install
 
@@ -46,7 +56,7 @@ Choose one TLS mode in `wormholed.toml`:
 - **Built-in ACME DNS-01:** configure the ACME directory and Cloudflare credentials. Grant the token only DNS-record edit/read access for the required zones. Wormhole creates and removes `_acme-challenge` TXT records and renews cached certificates. For systemd, pass the token with `LoadCredential=cloudflare_token:/secure/source` in a service drop-in and set `cloudflare_token_file = "/run/credentials/wormholed.service/cloudflare_token"`; use the same credential pattern for static private keys.
 - **Self-signed:** development and private testing only; clients must explicitly trust the generated certificate.
 
-Never place Cloudflare token contents or private keys in command arguments, logs, or the administration API.
+Never place Cloudflare token contents or private keys in command arguments, logs, or the administration API. The HTTPS edge supports HTTP/1.1 ALPN only. Encrypted ClientHello (ECH) is not advertised or supported because relay routing and control-upgrade isolation require the configured SNI.
 
 ## Container
 

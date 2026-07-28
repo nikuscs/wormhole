@@ -143,6 +143,8 @@ impl WormholeDriver {
                             .await;
                     }
                 }
+            } else if let Err(error @ DriverError::Denied(_)) = result {
+                return Err(error);
             } else if let Err(error) = result {
                 attempts = attempts.saturating_add(1);
                 let _log =
@@ -301,7 +303,7 @@ pub async fn test_remote(
     identity: wormhole_proto::Identity,
 ) -> Result<Duration, DriverError> {
     let started = std::time::Instant::now();
-    let (endpoint, connection, _channel, _limits) = connect_remote(remote, identity).await?;
+    let (endpoint, connection, _channel, _limits) = connect_remote(remote, &identity).await?;
     connection.close(0_u32.into(), b"remote test complete");
     endpoint.wait_idle().await;
     Ok(started.elapsed())

@@ -66,25 +66,36 @@ pub enum SessionCommand {
 }
 
 /// Response returned from a client-opened HTTP target.
-#[derive(Debug)]
 pub struct HttpTunnelResponse {
     /// Typed response metadata.
     pub head: HttpResponseHead,
     /// Bounded streaming response-body channel.
     pub body: mpsc::Receiver<Result<Bytes, String>>,
-    /// Raw QUIC stream retained after a 101 response.
+    /// Raw tunnel stream retained after a 101 response.
     pub upgrade: Option<UpgradeTunnel>,
 }
 
-/// Raw bidirectional QUIC stream retained for an HTTP upgrade.
-#[derive(Debug)]
+impl std::fmt::Debug for HttpTunnelResponse {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("HttpTunnelResponse")
+            .field("head", &self.head)
+            .field("upgrade", &self.upgrade.is_some())
+            .finish_non_exhaustive()
+    }
+}
+
+pub type TunnelRead = Box<dyn tokio::io::AsyncRead + Unpin + Send>;
+pub type TunnelWrite = Box<dyn tokio::io::AsyncWrite + Unpin + Send>;
+
+/// Raw bidirectional tunnel stream retained for an HTTP upgrade.
 pub struct UpgradeTunnel {
     /// Notifies the session actor when the upgraded stream is released.
     pub(crate) release: tokio::sync::oneshot::Sender<()>,
     /// Bytes from the local target to the public client.
-    pub recv: quinn::RecvStream,
+    pub recv: TunnelRead,
     /// Bytes from the public client to the local target.
-    pub send: quinn::SendStream,
+    pub send: TunnelWrite,
 }
 
 /// Shared routing record for one public endpoint.

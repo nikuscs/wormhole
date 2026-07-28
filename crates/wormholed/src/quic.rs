@@ -22,12 +22,13 @@ use crate::{
     authz::{KeyDecision, KeyLimits},
     certs::CertManager,
     session::SessionActor,
+    session_streams::DataOpener,
     state::AppState,
 };
 
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
-const KEEP_ALIVE: Duration = Duration::from_secs(15);
-const IDLE_TIMEOUT: Duration = Duration::from_mins(1);
+const KEEP_ALIVE: Duration = Duration::from_secs(3);
+const IDLE_TIMEOUT: Duration = Duration::from_secs(10);
 
 type IpRateLimiter = RateLimiter<IpAddr, DashMapStateStore<IpAddr>, DefaultClock>;
 type QuicIo = tokio::io::Join<quinn::RecvStream, quinn::SendStream>;
@@ -51,11 +52,8 @@ impl QuicServer {
     ) -> Result<Self, QuicError> {
         let server_config = server_config(certificates)?;
         let endpoint = Endpoint::server(server_config, address)?;
-        let quota = Quota::per_minute(
-            NonZeroU32::new(handshakes_per_minute)
-                .ok_or_else(|| QuicError::Config("handshake rate must be non-zero".to_owned()))?,
-        );
-        Ok(Self { endpoint, state, server_name, limiter: RateLimiter::keyed(quota) })
+        let limiter = handshake_limiter(handshakes_per_minute)?;
+        Ok(Self { endpoint, state, server_name, limiter })
     }
 
     /// Returns the actual bound UDP address, including a selected port for `:0`.
@@ -85,6 +83,14 @@ impl QuicServer {
             });
         }
     }
+}
+
+fn handshake_limiter(handshakes_per_minute: u32) -> Result<IpRateLimiter, QuicError> {
+    let quota = Quota::per_minute(
+        NonZeroU32::new(handshakes_per_minute)
+            .ok_or_else(|| QuicError::Config("handshake rate must be non-zero".to_owned()))?,
+    );
+    Ok(RateLimiter::keyed(quota))
 }
 
 fn server_config(certificates: &CertManager) -> Result<quinn::ServerConfig, QuicError> {
@@ -136,7 +142,52 @@ async fn handle_connection(
     let fingerprint = identity.fingerprint.clone();
     let result = SessionActor::new(
         channel,
-        connection.clone(),
+        DataOpener::Quic(connection.clone()),
+        Arc::clone(&state),
+        fingerprint.clone(),
+        identity.limits,
+    )
+    .run()
+    .await;
+    state.close_session(&fingerprint);
+    result.map_err(QuicError::Session)
+}
+
+pub(crate) async fn run_io_session<S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin>(
+    io: S,
+    opener: DataOpener,
+    state: Arc<AppState>,
+    server_name: &str,
+) -> Result<(), QuicError> {
+    let authenticated = Arc::new(Mutex::new(None));
+    let handshake = timeout(
+        HANDSHAKE_TIMEOUT,
+        authenticate_channel(
+            ControlChannel::new(io),
+            Arc::clone(&state),
+            server_name,
+            Arc::clone(&authenticated),
+        ),
+    )
+    .await;
+    let handshake = match handshake {
+        Ok(Ok(handshake)) => handshake,
+        Ok(Err(error)) => {
+            release_failed_auth(&state, &authenticated);
+            return Err(error);
+        }
+        Err(_) => {
+            release_failed_auth(&state, &authenticated);
+            return Err(QuicError::HandshakeTimeout);
+        }
+    };
+    let Some((channel, identity)) = handshake else {
+        return Ok(());
+    };
+    let fingerprint = identity.fingerprint.clone();
+    let result = SessionActor::new(
+        channel,
+        opener,
         Arc::clone(&state),
         fingerprint.clone(),
         identity.limits,
@@ -154,7 +205,21 @@ async fn authenticate(
     authenticated: Arc<Mutex<Option<Authenticated>>>,
 ) -> Result<Option<(ControlChannel<QuicIo>, Authenticated)>, QuicError> {
     let (send, recv) = connection.accept_bi().await?;
-    let mut channel = ControlChannel::new(tokio::io::join(recv, send));
+    authenticate_channel(
+        ControlChannel::new(tokio::io::join(recv, send)),
+        state,
+        server_name,
+        authenticated,
+    )
+    .await
+}
+
+async fn authenticate_channel<S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin>(
+    mut channel: ControlChannel<S>,
+    state: Arc<AppState>,
+    server_name: &str,
+    authenticated: Arc<Mutex<Option<Authenticated>>>,
+) -> Result<Option<(ControlChannel<S>, Authenticated)>, QuicError> {
     let limits = Limits {
         max_binds: state.limits.max_binds_per_key,
         max_streams: state.limits.max_streams_per_session,
@@ -225,8 +290,8 @@ fn authorize_key(
     }
 }
 
-async fn send_handshake_step(
-    channel: &mut ControlChannel<QuicIo>,
+async fn send_handshake_step<S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin>(
+    channel: &mut ControlChannel<S>,
     step: HandshakeStep,
 ) -> Result<bool, QuicError> {
     match step {

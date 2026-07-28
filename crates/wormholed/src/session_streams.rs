@@ -9,7 +9,7 @@ use std::{
 
 use parking_lot::Mutex;
 use tokio::{
-    io::{AsyncRead, AsyncWrite, ReadBuf},
+    io::{AsyncRead, AsyncReadExt as _, AsyncWrite, AsyncWriteExt as _, ReadBuf},
     sync::{mpsc, oneshot},
 };
 use tracing::Instrument;
@@ -19,15 +19,39 @@ use wormhole_proto::{
 };
 
 use crate::{
-    registry::{HttpTunnelResponse, UpgradeTunnel},
+    registry::{HttpTunnelResponse, TunnelRead, TunnelWrite, UpgradeTunnel},
     state::AppState,
 };
 
 const DATA_IDLE_TIMEOUT: Duration = Duration::from_secs(75);
 const RESPONSE_HEADER_TIMEOUT: Duration = Duration::from_secs(10);
 
+#[derive(Clone)]
+pub enum DataOpener {
+    Quic(quinn::Connection),
+    Mux(wormhole_proto::mux_runtime::MuxOpener),
+}
+
+impl DataOpener {
+    async fn open(&self, header: StreamHeader) -> Result<(TunnelWrite, TunnelRead), String> {
+        match self {
+            Self::Quic(connection) => {
+                let (mut send, recv) =
+                    connection.open_bi().await.map_err(|error| error.to_string())?;
+                write_stream_header(&mut send, &header).await.map_err(|error| error.to_string())?;
+                Ok((Box::new(send), Box::new(recv)))
+            }
+            Self::Mux(opener) => {
+                let stream = opener.open(header).await.map_err(|error| error.to_string())?;
+                let (recv, send) = tokio::io::split(stream);
+                Ok((Box::new(send), Box::new(recv)))
+            }
+        }
+    }
+}
+
 pub fn spawn_http_stream(
-    connection: quinn::Connection,
+    opener: DataOpener,
     state: Arc<AppState>,
     permit: tokio::sync::OwnedSemaphorePermit,
     header: StreamHeader,
@@ -42,10 +66,9 @@ pub fn spawn_http_stream(
         async move {
             let _stream = stream;
             let _permit = permit;
-            match open_http_stream(connection, header, request_body, upgrade).await {
-                Ok(OpenedHttp::Body { response, sender, mut recv }) => {
+            match open_http_stream(opener, header, request_body, upgrade).await {
+                Ok(OpenedHttp::Body { response, sender, recv }) => {
                     if reply.send(Ok(response)).is_err() {
-                        let _stopped = recv.stop(0_u32.into());
                         return;
                     }
                     stream_response_body(recv, sender).await;
@@ -65,7 +88,7 @@ pub fn spawn_http_stream(
 }
 
 pub fn spawn_tcp_stream(
-    connection: quinn::Connection,
+    opener: DataOpener,
     state: Arc<AppState>,
     permit: tokio::sync::OwnedSemaphorePermit,
     header: StreamHeader,
@@ -78,12 +101,9 @@ pub fn spawn_tcp_stream(
         async move {
             let _stream = stream;
             let _permit = permit;
-            let Ok((mut send, recv)) = connection.open_bi().await else {
+            let Ok((send, recv)) = opener.open(header).await else {
                 return;
             };
-            if write_stream_header(&mut send, &header).await.is_err() {
-                return;
-            }
             let tunnel = tokio::io::join(recv, send);
             let _copied = copy_bidirectional_idle(public_stream, tunnel).await;
         }
@@ -98,13 +118,12 @@ const fn stream_bind(header: &StreamHeader) -> uuid::Uuid {
 }
 
 async fn open_http_stream(
-    connection: quinn::Connection,
+    opener: DataOpener,
     header: StreamHeader,
     mut request_body: mpsc::Receiver<Result<bytes::Bytes, String>>,
     upgrade: bool,
 ) -> Result<OpenedHttp, String> {
-    let (mut send, mut recv) = connection.open_bi().await.map_err(|error| error.to_string())?;
-    write_stream_header(&mut send, &header).await.map_err(|error| error.to_string())?;
+    let (mut send, mut recv) = opener.open(header).await?;
     if upgrade {
         copy_request_body(&mut send, &mut request_body).await?;
         let head = timed_response_head(&mut recv).await?;
@@ -121,19 +140,39 @@ async fn open_http_stream(
                 released,
             });
         }
-        let _finished = send.finish();
+        let _closed = send.shutdown().await;
         return Ok(body_response(head, recv));
     }
+    let (body_done, body_result) = oneshot::channel();
     tokio::spawn(async move {
-        if copy_request_body(&mut send, &mut request_body).await.is_ok() {
-            let _finished = send.finish();
+        let result = copy_request_body(&mut send, &mut request_body).await;
+        if result.is_ok() {
+            let _closed = send.shutdown().await;
         }
+        let _sent = body_done.send(result);
     });
-    let head = timed_response_head(&mut recv).await?;
+    let head = response_while_sending(&mut recv, body_result).await?;
     Ok(body_response(head, recv))
 }
 
-async fn timed_response_head(recv: &mut quinn::RecvStream) -> Result<HttpResponseHead, String> {
+async fn response_while_sending(
+    recv: &mut TunnelRead,
+    body_result: oneshot::Receiver<Result<(), String>>,
+) -> Result<HttpResponseHead, String> {
+    let mut response = Box::pin(read_response_head(recv));
+    tokio::select! {
+        head = &mut response => head.map_err(|error| error.to_string()),
+        body = body_result => {
+            body.map_err(|_| "request body task stopped".to_owned())??;
+            tokio::time::timeout(RESPONSE_HEADER_TIMEOUT, &mut response)
+                .await
+                .map_err(|_| "response header timeout".to_owned())?
+                .map_err(|error| error.to_string())
+        }
+    }
+}
+
+async fn timed_response_head(recv: &mut TunnelRead) -> Result<HttpResponseHead, String> {
     tokio::time::timeout(RESPONSE_HEADER_TIMEOUT, read_response_head(recv))
         .await
         .map_err(|_| "response header timeout".to_owned())?
@@ -141,7 +180,7 @@ async fn timed_response_head(recv: &mut quinn::RecvStream) -> Result<HttpRespons
 }
 
 async fn copy_request_body(
-    send: &mut quinn::SendStream,
+    send: &mut TunnelWrite,
     body: &mut mpsc::Receiver<Result<bytes::Bytes, String>>,
 ) -> Result<(), String> {
     loop {
@@ -159,24 +198,23 @@ async fn copy_request_body(
     }
 }
 
-fn body_response(head: HttpResponseHead, recv: quinn::RecvStream) -> OpenedHttp {
+fn body_response(head: HttpResponseHead, recv: TunnelRead) -> OpenedHttp {
     let (sender, body) = mpsc::channel(16);
     OpenedHttp::Body { response: HttpTunnelResponse { head, body, upgrade: None }, sender, recv }
 }
 
 async fn stream_response_body(
-    mut recv: quinn::RecvStream,
+    mut recv: TunnelRead,
     sender: mpsc::Sender<Result<bytes::Bytes, String>>,
 ) {
     let mut buffer = vec![0_u8; 16 * 1024];
     loop {
         let read = tokio::time::timeout(DATA_IDLE_TIMEOUT, recv.read(&mut buffer)).await;
         match read {
-            Ok(Ok(None)) => return,
-            Ok(Ok(Some(length))) => {
+            Ok(Ok(0)) => return,
+            Ok(Ok(length)) => {
                 let chunk = bytes::Bytes::copy_from_slice(&buffer[..length]);
                 if sender.send(Ok(chunk)).await.is_err() {
-                    let _stopped = recv.stop(0_u32.into());
                     return;
                 }
             }
@@ -186,7 +224,6 @@ async fn stream_response_body(
             }
             Err(_) => {
                 let _sent = sender.send(Err("response body idle timeout".to_owned())).await;
-                let _stopped = recv.stop(0_u32.into());
                 return;
             }
         }
@@ -281,7 +318,7 @@ enum OpenedHttp {
     Body {
         response: HttpTunnelResponse,
         sender: mpsc::Sender<Result<bytes::Bytes, String>>,
-        recv: quinn::RecvStream,
+        recv: TunnelRead,
     },
     Upgrade {
         response: HttpTunnelResponse,

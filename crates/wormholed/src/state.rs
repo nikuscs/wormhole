@@ -1,8 +1,11 @@
 //! Shared relay state and global per-key session/bind counters.
 
-use std::sync::{
-    Arc,
-    atomic::{AtomicU32, AtomicU64, Ordering},
+use std::{
+    net::SocketAddr,
+    sync::{
+        Arc, OnceLock,
+        atomic::{AtomicU32, AtomicU64, Ordering},
+    },
 };
 
 use dashmap::{DashMap, mapref::entry::Entry};
@@ -17,6 +20,13 @@ use crate::{
     edge_tcp::TcpEdgeManager,
     registry::Registry,
 };
+
+#[derive(Debug, Clone, Copy)]
+pub struct ListenerAddresses {
+    pub quic: SocketAddr,
+    pub https: SocketAddr,
+    pub http: SocketAddr,
+}
 
 /// Process-wide state shared by listeners and session actors.
 pub struct AppState {
@@ -35,6 +45,7 @@ pub struct AppState {
     counters: DashMap<String, Arc<KeyCounters>>,
     active_streams: AtomicU64,
     buffered_inflight: DashMap<Uuid, u64>,
+    listener_addresses: OnceLock<ListenerAddresses>,
     shutdown_tx: watch::Sender<bool>,
 }
 
@@ -58,12 +69,21 @@ impl AppState {
             counters: DashMap::new(),
             active_streams: AtomicU64::new(0),
             buffered_inflight: DashMap::new(),
+            listener_addresses: OnceLock::new(),
             shutdown_tx,
         };
         for (_, bind) in state.database.list_binds()? {
             state.counters(&bind.key_fpr).binds.fetch_add(1, Ordering::Relaxed);
         }
         Ok(state)
+    }
+
+    pub fn set_listener_addresses(&self, addresses: ListenerAddresses) {
+        let _set = self.listener_addresses.set(addresses);
+    }
+
+    pub fn listener_addresses(&self) -> Option<ListenerAddresses> {
+        self.listener_addresses.get().copied()
     }
 
     /// Attempts to reserve one globally limited session slot.

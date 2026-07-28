@@ -1,5 +1,3 @@
-//! Public TLS HTTP/1.1 edge and request tunneling into online sessions.
-
 use std::{convert::Infallible, net::SocketAddr, sync::Arc, time::Duration};
 
 use base64::{Engine as _, engine::general_purpose::STANDARD};
@@ -109,16 +107,72 @@ impl HttpsEdge {
 }
 
 async fn handle_request(
-    request: Request<Incoming>,
+    mut request: Request<Incoming>,
     peer: SocketAddr,
     sni: String,
     state: Arc<AppState>,
 ) -> Result<Response<EdgeBody>, Infallible> {
+    if request.uri().path() == "/_wormhole/ws" && state.registry.is_domain(&sni) {
+        return Ok(websocket_response(&mut request, sni, state));
+    }
     let response = route_request(request, peer, &sni, &state).await;
     Ok(response.unwrap_or_else(|error| {
         tracing::warn!(%error, %peer, %sni, "HTTPS edge request failed");
         static_response(StatusCode::BAD_GATEWAY, "Bad Gateway")
     }))
+}
+
+fn websocket_response(
+    request: &mut Request<Incoming>,
+    sni: String,
+    state: Arc<AppState>,
+) -> Response<EdgeBody> {
+    if !valid_websocket_request(request, &sni) {
+        return static_response(StatusCode::BAD_REQUEST, "Bad WebSocket Request");
+    }
+    let key = request.headers().get("sec-websocket-key").expect("validated key");
+    let accept = tokio_tungstenite::tungstenite::handshake::derive_accept_key(key.as_bytes());
+    let upgraded = hyper::upgrade::on(request);
+    tokio::spawn(async move {
+        if let Ok(upgraded) = upgraded.await {
+            crate::websocket::run(upgraded, state, sni).await;
+        }
+    });
+    Response::builder()
+        .status(StatusCode::SWITCHING_PROTOCOLS)
+        .header(http::header::CONNECTION, "upgrade")
+        .header(http::header::UPGRADE, "websocket")
+        .header("sec-websocket-accept", accept)
+        .body(
+            Full::new(Bytes::new())
+                .map_err(|never| -> Box<dyn std::error::Error + Send + Sync> { match never {} })
+                .boxed_unsync(),
+        )
+        .expect("valid WebSocket response")
+}
+
+fn valid_websocket_request<B>(request: &Request<B>, sni: &str) -> bool {
+    let valid_host = request
+        .headers()
+        .get(http::header::HOST)
+        .and_then(|value| value.to_str().ok())
+        .and_then(hostname_from_authority)
+        .is_some_and(|host| host.eq_ignore_ascii_case(sni));
+    let expected_origin = format!("https://{sni}");
+    let mut origins = request.headers().get_all(http::header::ORIGIN).iter();
+    let valid_origin = match (origins.next(), origins.next()) {
+        (None, None) => true,
+        (Some(origin), None) => origin.to_str().is_ok_and(|origin| origin == expected_origin),
+        _ => false,
+    };
+    request.method() == http::Method::GET
+        && request.uri().path() == "/_wormhole/ws"
+        && request.uri().query().is_none()
+        && valid_host
+        && valid_origin
+        && request.headers().get("sec-websocket-key").is_some()
+        && request.headers().get("sec-websocket-version").is_some_and(|value| value == "13")
+        && is_upgrade_request(request)
 }
 
 async fn route_request(
@@ -196,11 +250,7 @@ async fn proxy_request(
         })
         .await
         .map_err(|_| EdgeError::Offline)?;
-    let tunneled = timeout(HEADER_TIMEOUT, reply_rx)
-        .await
-        .map_err(|_| EdgeError::HeaderTimeout)?
-        .map_err(|_| EdgeError::Offline)?
-        .map_err(EdgeError::Tunnel)?;
+    let tunneled = reply_rx.await.map_err(|_| EdgeError::Offline)?.map_err(EdgeError::Tunnel)?;
     response_from_tunnel(tunneled, public_upgrade)
 }
 
@@ -393,7 +443,7 @@ fn response_connection_tokens(fields: &[HeaderField]) -> Vec<String> {
     connection_tokens(values.iter().map(String::as_str))
 }
 
-fn is_upgrade_request(request: &Request<Incoming>) -> bool {
+fn is_upgrade_request<B>(request: &Request<B>) -> bool {
     request.headers().contains_key(http::header::UPGRADE)
         && request
             .headers()

@@ -17,6 +17,10 @@ use super::{
     tailscale_state::{binding_snapshot, record_ownership, remove_install, serve_status},
 };
 
+#[cfg(test)]
+#[path = "tailscale_process_tests.rs"]
+mod tests;
+
 pub async fn record_installed_ownership(
     directory: Option<&std::path::Path>,
     api: &Arc<dyn TailscaleApi>,

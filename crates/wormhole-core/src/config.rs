@@ -178,14 +178,14 @@ impl ClientConfig {
             if name.trim().is_empty() || remote.server_name.trim().is_empty() {
                 return Err(ConfigError::Invalid("remote names must not be empty".to_owned()));
             }
-            let valid_addr = remote.addr.rsplit_once(':').is_some_and(|(host, port)| {
-                let host_valid = !host.is_empty()
-                    && (!host.contains(':') || (host.starts_with('[') && host.ends_with(']')));
-                host_valid && port.parse::<u16>().is_ok_and(|port| port != 0)
-            });
-            if !valid_addr {
+            if !valid_authority(&remote.addr) {
                 return Err(ConfigError::Invalid(format!(
                     "remote {name} addr must include a non-zero UDP port"
+                )));
+            }
+            if remote.https_addr.as_deref().is_some_and(|address| !valid_authority(address)) {
+                return Err(ConfigError::Invalid(format!(
+                    "remote {name} https_addr must include a non-zero TCP port"
                 )));
             }
         }
@@ -194,6 +194,14 @@ impl ClientConfig {
         }
         Ok(())
     }
+}
+
+fn valid_authority(address: &str) -> bool {
+    address.rsplit_once(':').is_some_and(|(host, port)| {
+        let host_valid = !host.is_empty()
+            && (!host.contains(':') || (host.starts_with('[') && host.ends_with(']')));
+        host_valid && port.parse::<u16>().is_ok_and(|port| port != 0)
+    })
 }
 
 /// Returns `WORMHOLE_CONFIG` or `~/.config/wormhole/config.toml`.

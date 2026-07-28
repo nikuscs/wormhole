@@ -40,6 +40,24 @@ impl TunnelDriver for HealthDriver {
 }
 
 #[tokio::test]
+async fn doctor_reports_invalid_remote_identity_and_unreachable_relay() {
+    let directory = tempdir().expect("temporary directory");
+    let home = Utf8PathBuf::from_path_buf(directory.path().to_owned()).expect("UTF-8 home");
+    let identities = IdentityStore::with_home(home.clone());
+    identities.default_identity().expect("default identity");
+    let mut config = ClientConfig::default();
+    let remote: crate::remotes::Remote = toml::from_str(&format!(
+        "addr = \"127.0.0.1:9\"\nserver_name = \"localhost\"\nidentity = \"{}\"",
+        home.join("missing.key")
+    ))
+    .expect("remote");
+    config.remotes.insert("broken".to_owned(), remote);
+    let checks = doctor_with(&config, &DriverRegistry::new(), &identities).await;
+    assert!(checks.iter().any(|check| check.name == "identity:broken" && !check.healthy));
+    assert!(checks.iter().any(|check| check.name == "remote:broken" && !check.healthy));
+}
+
+#[tokio::test]
 async fn doctor_reports_each_mock_driver_health() {
     let directory = tempdir().expect("temporary directory");
     let home = Utf8PathBuf::from_path_buf(directory.path().to_owned()).expect("UTF-8 home");

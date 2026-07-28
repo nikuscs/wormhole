@@ -29,6 +29,10 @@ pub async fn preflight_driver(
     }
 }
 
+#[cfg(test)]
+#[path = "manager_status_tests.rs"]
+mod tests;
+
 struct UnavailableDriver(String);
 
 #[async_trait]

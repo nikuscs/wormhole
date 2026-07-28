@@ -6,22 +6,37 @@ use std::{
     time::Duration,
 };
 
+use futures::{SinkExt as _, StreamExt as _};
 use rustls::{
     ClientConfig as RustlsClientConfig, RootCertStore,
     pki_types::{CertificateDer, pem::PemObject},
 };
+use tokio_tungstenite::{
+    Connector, client_async_tls_with_config,
+    tungstenite::{
+        client::IntoClientRequest as _,
+        protocol::{Message, WebSocketConfig},
+    },
+};
 use wormhole_proto::{
-    ALPN, ClientHandshake, HandshakeStep, Identity, codec::ControlChannel, frames::Limits,
+    ALPN, ClientHandshake, HandshakeStep, Identity,
+    codec::ControlChannel,
+    frames::Limits,
+    mux::MAX_PAYLOAD,
+    mux_runtime::{MuxEndpoint, MuxRole, reset_network_frame},
 };
 
 use crate::{error::DriverError, remotes::Remote};
 
-pub type QuicIo = tokio::io::Join<quinn::RecvStream, quinn::SendStream>;
+pub trait ControlIo: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send {}
+impl<T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send> ControlIo for T {}
+pub type BoxControlIo = Box<dyn ControlIo>;
 
 pub async fn connect_remote(
     remote: &Remote,
-    identity: Identity,
-) -> Result<(quinn::Endpoint, quinn::Connection, ControlChannel<QuicIo>, Limits), DriverError> {
+    identity: &Identity,
+) -> Result<(quinn::Endpoint, quinn::Connection, ControlChannel<BoxControlIo>, Limits), DriverError>
+{
     let address =
         remote.resolve_addr().await.map_err(|error| DriverError::Transport(error.to_string()))?;
     let endpoint = client_endpoint(address.ip(), remote)?;
@@ -32,6 +47,96 @@ pub async fn connect_remote(
         .map_err(|error| DriverError::Transport(error.to_string()))?;
     let (channel, limits) = authenticate(&connection, identity, &remote.server_name).await?;
     Ok((endpoint, connection, channel, limits))
+}
+
+pub type WsConnect =
+    (ControlChannel<BoxControlIo>, Limits, tokio::sync::mpsc::Receiver<tokio::io::DuplexStream>);
+
+pub async fn connect_remote_ws(
+    remote: &Remote,
+    identity: &Identity,
+) -> Result<WsConnect, DriverError> {
+    let address = remote
+        .resolve_https_addr()
+        .await
+        .map_err(|error| DriverError::Transport(error.to_string()))?;
+    let url = format!("wss://{}:{}/_wormhole/ws", remote.server_name, address.port());
+    let request =
+        url.into_client_request().map_err(|error| DriverError::Transport(error.to_string()))?;
+    let stream = tokio::net::TcpStream::connect(address)
+        .await
+        .map_err(|error| DriverError::Transport(error.to_string()))?;
+    let tls = websocket_tls(remote)?;
+    let (socket, _response) = client_async_tls_with_config(
+        request,
+        stream,
+        Some(websocket_config()),
+        Some(Connector::Rustls(Arc::new(tls))),
+    )
+    .await
+    .map_err(|error| DriverError::Transport(error.to_string()))?;
+    let (endpoint, network, outbound) = MuxEndpoint::spawn(MuxRole::Client);
+    tokio::spawn(websocket_bridge(socket, network, outbound));
+    let io: BoxControlIo = Box::new(endpoint.control);
+    let (channel, limits) = authenticate_io(io, identity, &remote.server_name).await?;
+    Ok((channel, limits, endpoint.incoming))
+}
+
+async fn websocket_bridge(
+    socket: tokio_tungstenite::WebSocketStream<
+        tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
+    >,
+    network: tokio::sync::mpsc::Sender<Vec<u8>>,
+    mut outbound: tokio::sync::mpsc::Receiver<Vec<u8>>,
+) {
+    let (mut sink, mut source) = socket.split();
+    let mut keepalive = tokio::time::interval(Duration::from_secs(20));
+    keepalive.tick().await;
+    loop {
+        tokio::select! {
+            incoming = source.next() => match incoming {
+                Some(Ok(Message::Binary(payload))) => {
+                    if payload.len() > MAX_PAYLOAD + 4 {
+                        let Some(channel) = oversized_data_channel(&payload) else { return };
+                        let Ok(reset) = reset_network_frame(channel) else { return };
+                        if sink.send(Message::Binary(reset.clone().into())).await.is_err()
+                            || network.send(reset).await.is_err()
+                        {
+                            return;
+                        }
+                    } else if network.send(payload.to_vec()).await.is_err() {
+                        return;
+                    }
+                }
+                Some(Ok(Message::Ping(payload))) => {
+                    if sink.send(Message::Pong(payload)).await.is_err() { return; }
+                }
+                Some(Ok(Message::Close(_)) | Err(_)) | None => return,
+                Some(Ok(_)) => {}
+            },
+            message = outbound.recv() => {
+                let Some(message) = message else { return };
+                if sink.send(Message::Binary(message.into())).await.is_err() { return; }
+            }
+            _ = keepalive.tick() => {
+                if sink.send(Message::Ping(Vec::new().into())).await.is_err() { return; }
+            }
+        }
+    }
+}
+
+fn websocket_config() -> WebSocketConfig {
+    WebSocketConfig::default()
+        .read_buffer_size(MAX_PAYLOAD)
+        .write_buffer_size(MAX_PAYLOAD)
+        .max_write_buffer_size(4 * MAX_PAYLOAD)
+        .max_message_size(Some(2 * MAX_PAYLOAD + 4))
+        .max_frame_size(Some(2 * MAX_PAYLOAD + 4))
+}
+
+fn oversized_data_channel(payload: &[u8]) -> Option<u32> {
+    let channel = u32::from_be_bytes(payload.get(..4)?.try_into().ok()?);
+    (channel != 0).then_some(channel)
 }
 
 pub async fn probe_remote(remote: &Remote) -> Result<(), DriverError> {
@@ -49,15 +154,22 @@ pub async fn probe_remote(remote: &Remote) -> Result<(), DriverError> {
 
 async fn authenticate(
     connection: &quinn::Connection,
-    identity: Identity,
+    identity: &Identity,
     server_name: &str,
-) -> Result<(ControlChannel<QuicIo>, Limits), DriverError> {
+) -> Result<(ControlChannel<BoxControlIo>, Limits), DriverError> {
+    let (send, recv) =
+        connection.open_bi().await.map_err(|error| DriverError::Transport(error.to_string()))?;
+    let io: BoxControlIo = Box::new(tokio::io::join(recv, send));
+    authenticate_io(io, identity, server_name).await
+}
+
+async fn authenticate_io(
+    io: BoxControlIo,
+    identity: &Identity,
+    server_name: &str,
+) -> Result<(ControlChannel<BoxControlIo>, Limits), DriverError> {
     tokio::time::timeout(Duration::from_secs(5), async {
-        let (send, recv) = connection
-            .open_bi()
-            .await
-            .map_err(|error| DriverError::Transport(error.to_string()))?;
-        let mut channel = ControlChannel::new(tokio::io::join(recv, send));
+        let mut channel = ControlChannel::new(io);
         let mut handshake = ClientHandshake::new(identity, server_name, "wormhole-core");
         channel
             .send(&handshake.hello())
@@ -65,10 +177,19 @@ async fn authenticate(
             .map_err(|error| DriverError::Protocol(error.to_string()))?;
         let challenge =
             channel.recv().await.map_err(|error| DriverError::Protocol(error.to_string()))?;
-        let HandshakeStep::Reply(auth) =
-            handshake.step(&challenge).map_err(|error| DriverError::Protocol(error.to_string()))?
-        else {
-            return Err(DriverError::Protocol("relay did not challenge client".to_owned()));
+        let auth = match handshake
+            .step(&challenge)
+            .map_err(|error| DriverError::Protocol(error.to_string()))?
+        {
+            HandshakeStep::Reply(auth) => auth,
+            HandshakeStep::Failed { reason, .. } => {
+                return Err(DriverError::Denied(format!("relay denied client: {reason:?}")));
+            }
+            HandshakeStep::Done { .. } => {
+                return Err(DriverError::Protocol(
+                    "relay skipped client authentication".to_owned(),
+                ));
+            }
         };
         channel.send(&auth).await.map_err(|error| DriverError::Protocol(error.to_string()))?;
         let welcome =
@@ -76,7 +197,7 @@ async fn authenticate(
         match handshake.step(&welcome).map_err(|error| DriverError::Protocol(error.to_string()))? {
             HandshakeStep::Done { welcome, .. } => Ok((channel, welcome.limits)),
             HandshakeStep::Failed { reason, .. } => {
-                Err(DriverError::Protocol(format!("relay denied client: {reason:?}")))
+                Err(DriverError::Denied(format!("relay denied client: {reason:?}")))
             }
             HandshakeStep::Reply(_) => {
                 Err(DriverError::Protocol("relay repeated challenge".to_owned()))
@@ -87,13 +208,25 @@ async fn authenticate(
     .map_err(|_| DriverError::Transport("remote handshake timed out".to_owned()))?
 }
 
+fn websocket_tls(remote: &Remote) -> Result<RustlsClientConfig, DriverError> {
+    let _provider = rustls::crypto::aws_lc_rs::default_provider().install_default();
+    let roots = root_store(remote)?;
+    let mut tls = RustlsClientConfig::builder().with_root_certificates(roots).with_no_client_auth();
+    tls.alpn_protocols = vec![b"http/1.1".to_vec()];
+    Ok(tls)
+}
+
 fn client_endpoint(remote_ip: IpAddr, remote: &Remote) -> Result<quinn::Endpoint, DriverError> {
+    let _provider = rustls::crypto::aws_lc_rs::default_provider().install_default();
     let roots = root_store(remote)?;
     let mut tls = RustlsClientConfig::builder().with_root_certificates(roots).with_no_client_auth();
     tls.alpn_protocols = vec![ALPN.to_vec()];
     let crypto = quinn::crypto::rustls::QuicClientConfig::try_from(tls)
         .map_err(|error| DriverError::Transport(error.to_string()))?;
-    let client = quinn::ClientConfig::new(Arc::new(crypto));
+    let mut client = quinn::ClientConfig::new(Arc::new(crypto));
+    let mut transport = quinn::TransportConfig::default();
+    transport.max_concurrent_bidi_streams(quinn::VarInt::from_u32(1024));
+    client.transport_config(Arc::new(transport));
     let bind_ip = match remote_ip {
         IpAddr::V4(_) => IpAddr::V4(Ipv4Addr::UNSPECIFIED),
         IpAddr::V6(_) => IpAddr::V6(Ipv6Addr::UNSPECIFIED),
@@ -103,6 +236,10 @@ fn client_endpoint(remote_ip: IpAddr, remote: &Remote) -> Result<quinn::Endpoint
     endpoint.set_default_client_config(client);
     Ok(endpoint)
 }
+
+#[cfg(test)]
+#[path = "wormhole_transport_tests.rs"]
+mod tests;
 
 fn root_store(remote: &Remote) -> Result<RootCertStore, DriverError> {
     let mut roots = RootCertStore::empty();

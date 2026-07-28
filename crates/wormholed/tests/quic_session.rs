@@ -62,12 +62,7 @@ fn client_endpoint(certificate: rustls::pki_types::CertificateDer<'static>) -> q
 async fn connect(
     endpoint: &quinn::Endpoint,
     server: SocketAddr,
-    identity: Identity,
-) -> (
-    quinn::Connection,
-    ControlChannel<tokio::io::Join<quinn::RecvStream, quinn::SendStream>>,
-    ClientHandshake,
-) {
+) -> (quinn::Connection, ControlChannel<tokio::io::Join<quinn::RecvStream, quinn::SendStream>>) {
     let connection = endpoint
         .connect(server, "tun.example.com")
         .expect("connection must start")
@@ -75,13 +70,12 @@ async fn connect(
         .expect("connection must establish");
     let (send, recv) = connection.open_bi().await.expect("control stream must open");
     let channel = ControlChannel::new(join(recv, send));
-    let handshake = ClientHandshake::new(identity, "tun.example.com", "integration-test");
-    (connection, channel, handshake)
+    (connection, channel)
 }
 
 async fn authenticate(
     channel: &mut ControlChannel<tokio::io::Join<quinn::RecvStream, quinn::SendStream>>,
-    handshake: &mut ClientHandshake,
+    handshake: &mut ClientHandshake<'_>,
 ) -> HandshakeStep {
     channel.send(&handshake.hello()).await.expect("hello must send");
     let challenge = channel.recv().await.expect("challenge must arrive");
@@ -95,8 +89,9 @@ async fn authenticate(
 }
 
 async fn assert_wrong_key_denied(client: &quinn::Endpoint, server_addr: SocketAddr) {
-    let (connection, mut channel, handshake) =
-        connect(client, server_addr, Identity::generate()).await;
+    let identity = Identity::generate();
+    let (connection, mut channel) = connect(client, server_addr).await;
+    let handshake = ClientHandshake::new(&identity, "tun.example.com", "integration-test");
     channel.send(&handshake.hello()).await.expect("wrong hello must send");
     assert!(matches!(
         channel.recv().await.expect("denial must arrive"),
@@ -113,7 +108,8 @@ async fn bind_and_activate(
     https_addr: SocketAddr,
     certificate: CertificateDer<'static>,
 ) -> quinn::Connection {
-    let (connection, mut channel, mut handshake) = connect(client, server_addr, allowed).await;
+    let (connection, mut channel) = connect(client, server_addr).await;
+    let mut handshake = ClientHandshake::new(&allowed, "tun.example.com", "integration-test");
     assert!(matches!(authenticate(&mut channel, &mut handshake).await, HandshakeStep::Done { .. }));
     let request = Uuid::now_v7();
     channel

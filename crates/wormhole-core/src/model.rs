@@ -8,6 +8,10 @@ use utoipa::ToSchema;
 use uuid::Uuid;
 use wormhole_proto::frames::{BufferPolicy, EdgeAuth, Persistence};
 
+#[cfg(test)]
+#[path = "model_tests.rs"]
+mod tests;
+
 /// Protocol spoken by a local service.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]

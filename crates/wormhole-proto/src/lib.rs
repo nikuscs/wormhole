@@ -7,6 +7,9 @@ pub mod frames;
 pub mod handshake;
 pub mod keys;
 pub mod mux;
+pub mod mux_runtime;
+mod mux_runtime_io;
+mod mux_runtime_types;
 
 pub use error::ProtoError;
 pub use frames::{ALPN, PROTO_VERSION};

@@ -21,6 +21,8 @@ pub mod quic;
 pub mod registry;
 mod registry_types;
 pub mod session;
-mod session_streams;
+#[doc(hidden)]
+pub mod session_streams;
 pub mod shutdown;
 pub mod state;
+mod websocket;

@@ -1,4 +1,4 @@
-use super::server_config;
+use super::{handshake_limiter, server_config};
 use crate::certs::CertManager;
 use crate::config::{
     AuthConfig, LimitsConfig, PortRange, ServerConfig, TcpConfig, TlsConfig, TlsMode,
@@ -6,6 +6,17 @@ use crate::config::{
 };
 use camino::Utf8Path;
 use tempfile::tempdir;
+
+#[test]
+fn thirty_first_handshake_from_one_ip_is_rate_limited() {
+    let limiter = handshake_limiter(30).expect("limiter");
+    let ip = "127.0.0.1".parse().expect("IP");
+    for _ in 0..30 {
+        assert!(limiter.check_key(&ip).is_ok());
+    }
+    assert!(limiter.check_key(&ip).is_err());
+    assert!(limiter.check_key(&"127.0.0.2".parse().expect("other IP")).is_ok());
+}
 
 #[tokio::test]
 async fn quic_config_uses_ready_resolver() {

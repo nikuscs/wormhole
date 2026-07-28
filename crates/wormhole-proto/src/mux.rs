@@ -8,7 +8,8 @@ use crate::frames::StreamHeader;
 
 pub const INITIAL_WINDOW: u32 = 256 * 1024;
 pub const MAX_PAYLOAD: usize = 64 * 1024;
-pub const MAX_QUEUED_BYTES: usize = 16 * 1024 * 1024;
+pub const MAX_QUEUED_BYTES: usize = 2 * 1024 * 1024;
+pub const MAX_QUEUED_MESSAGES_PER_CHANNEL: usize = 64;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -101,6 +102,10 @@ impl MuxState {
             self.reset(channel);
             return Err(MuxError::QueueFull);
         }
+        if self.channel_mut(channel)?.queue.len() >= MAX_QUEUED_MESSAGES_PER_CHANNEL {
+            self.reset(channel);
+            return Err(MuxError::QueueFull);
+        }
         let length = payload.len();
         {
             let state = self.channel_mut(channel)?;
@@ -147,6 +152,10 @@ impl MuxState {
         Ok(())
     }
 
+    pub fn is_finished(&self, channel: u32) -> bool {
+        self.channels.get(&channel).is_some_and(|state| state.send_closed && state.receive_closed)
+    }
+
     pub fn reset(&mut self, channel: u32) {
         if let Some(state) = self.channels.remove(&channel) {
             self.queued_bytes =
@@ -174,7 +183,7 @@ pub enum MuxError {
     InvalidState,
     #[error("mux payload exceeds 64 KiB")]
     PayloadTooLarge,
-    #[error("mux aggregate queue exceeds 16 MiB")]
+    #[error("mux outbound queue exceeds its aggregate quota")]
     QueueFull,
 }
 

@@ -403,6 +403,24 @@
               "$ref": "#/components/schemas/CertificateExpiry"
             }
           },
+          "http_addr": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "https_addr": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "quic_addr": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "sessions": {
             "type": "integer",
             "format": "int32",

@@ -115,6 +115,50 @@ async fn sibling_endpoints_are_independent_and_errors_surface() {
 }
 
 #[tokio::test]
+async fn administrative_lifecycle_updates_and_removes_endpoints() {
+    let manager = manager();
+    assert!(manager.registry().get("mock").is_some());
+    manager.reload_config(ClientConfig::default());
+    let mut statuses = manager.subscribe();
+    let service =
+        Service { name: "admin".to_owned(), target: Target::Port(4321), proto: ServiceProto::Http };
+    let ids =
+        manager.expose(service.clone(), vec![spec("first"), spec("second")]).await.expect("expose");
+    wait_for_status(&manager, EndpointStatus::Online, 2).await;
+    assert!(statuses.try_recv().is_ok());
+
+    manager.confirm_handoff(ids[0]);
+    manager.fail_endpoint(ids[0], "forced".to_owned()).await;
+    assert!(matches!(
+        manager.list().into_iter().find(|entry| entry.id == ids[0]).map(|entry| entry.status),
+        Some(EndpointStatus::Error(message)) if message == "forced"
+    ));
+    manager.discard(ids[0]).await;
+    assert!(!manager.list().iter().any(|entry| entry.id == ids[0]));
+    manager.close_service("admin").await;
+    assert!(manager.list().iter().all(|entry| entry.status == EndpointStatus::Offline));
+
+    manager.expose(service, vec![spec("third")]).await.expect("expose again");
+    wait_for_status(&manager, EndpointStatus::Online, 1).await;
+    manager.close_service_with_forget("admin", true).await;
+    assert!(manager.list().iter().all(|entry| entry.status == EndpointStatus::Offline));
+    manager.shutdown_with_forget().await.expect("shutdown");
+}
+
+#[tokio::test]
+async fn rejects_unknown_driver_and_missing_endpoint_operations() {
+    let manager = manager();
+    let service =
+        Service { name: "app".to_owned(), target: Target::Port(3000), proto: ServiceProto::Http };
+    let mut endpoint = spec("app");
+    endpoint.driver = "missing".to_owned();
+    assert!(manager.expose(service, vec![endpoint]).await.is_err());
+    assert!(manager.close(uuid::Uuid::nil()).await.is_err());
+    assert!(manager.close_with_forget(uuid::Uuid::nil(), true).await.is_err());
+    manager.shutdown().await;
+}
+
+#[tokio::test]
 async fn mismatched_endpoint_protocol_is_rejected() {
     let manager = manager();
     let service =

@@ -37,7 +37,7 @@ pub async fn spool_retry_response(
 }
 
 pub async fn forward_spooled_response(
-    send: &mut quinn::SendStream,
+    send: &mut crate::wormhole_stream::BoxWrite,
     mut response: SpooledResponse,
     capture: Option<&CaptureContext>,
 ) -> Result<(), DriverError> {

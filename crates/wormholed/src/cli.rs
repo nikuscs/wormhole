@@ -156,13 +156,8 @@ async fn serve(path: &Utf8PathBuf, args: ServeArgs) -> Result<()> {
         Arc::clone(&state),
         Arc::clone(&certificates),
     )?;
+    record_listener_addresses(&state, &server, &https, &http)?;
     wormholed::shutdown::spawn_certificate_reload(certificates);
-    output::human(&format!(
-        "QUIC {}, HTTPS {}, HTTP {}",
-        server.local_addr()?,
-        https.local_addr()?,
-        http.local_addr()?
-    ));
     let result: Result<()> = tokio::select! {
         () = server.run() => Ok(()),
         result = https.run() => result.map_err(Into::into),
@@ -174,6 +169,25 @@ async fn serve(path: &Utf8PathBuf, args: ServeArgs) -> Result<()> {
     };
     wormholed::shutdown::drain(&state, &server).await;
     result
+}
+
+fn record_listener_addresses(
+    state: &wormholed::state::AppState,
+    server: &wormholed::quic::QuicServer,
+    https: &wormholed::edge_https::HttpsEdge,
+    http: &wormholed::edge_http::HttpRedirectEdge,
+) -> Result<()> {
+    let addresses = wormholed::state::ListenerAddresses {
+        quic: server.local_addr()?,
+        https: https.local_addr()?,
+        http: http.local_addr()?,
+    };
+    state.set_listener_addresses(addresses);
+    output::human(&format!(
+        "QUIC {}, HTTPS {}, HTTP {}",
+        addresses.quic, addresses.https, addresses.http
+    ));
+    Ok(())
 }
 
 async fn bind_http_redirect(
@@ -356,6 +370,9 @@ async fn status(path: &Utf8Path, args: JsonArgs) -> Result<()> {
                 sessions: 0,
                 binds: database.list_binds()?.len(),
                 streams: 0,
+                quic_addr: None,
+                https_addr: None,
+                http_addr: None,
                 certificate_expiries: Vec::new(),
                 certificate_error: None,
             };

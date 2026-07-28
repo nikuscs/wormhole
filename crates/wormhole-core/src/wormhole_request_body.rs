@@ -5,30 +5,35 @@ use std::convert::Infallible;
 use bytes::Bytes;
 use http_body_util::{BodyExt as _, Full, StreamBody};
 use hyper::body::Frame;
+use tokio::io::AsyncReadExt as _;
+
+#[derive(Debug, thiserror::Error)]
+#[error("public request body failed: {0}")]
+pub struct PublicReadError(#[source] pub std::io::Error);
 
 use crate::{
     capture::CaptureContext,
     error::DriverError,
-    wormhole_stream::{BoxError, ClientBody},
+    wormhole_stream::{BoxError, BoxRead, ClientBody},
 };
 
 pub async fn retain_request_body(
-    mut recv: quinn::RecvStream,
+    mut recv: BoxRead,
     limit: u64,
     capture: Option<CaptureContext>,
-) -> Result<(Vec<u8>, Option<quinn::RecvStream>, bool), DriverError> {
+) -> Result<(Vec<u8>, Option<BoxRead>, bool), DriverError> {
     let limit = usize::try_from(limit).unwrap_or(usize::MAX);
     let mut retained = Vec::new();
     loop {
         let mut buffer = vec![0_u8; 16 * 1024];
         match recv.read(&mut buffer).await {
-            Ok(None) => {
+            Ok(0) => {
                 if let Some(capture) = &capture {
                     capture.complete_request();
                 }
                 return Ok((retained, None, true));
             }
-            Ok(Some(length)) => {
+            Ok(length) => {
                 if let Some(capture) = &capture {
                     capture.request_bytes(&buffer[..length]);
                 }
@@ -44,7 +49,7 @@ pub async fn retain_request_body(
 
 pub fn request_body_with_prefix(
     prefix: Vec<u8>,
-    recv: quinn::RecvStream,
+    recv: BoxRead,
     capture: Option<CaptureContext>,
 ) -> ClientBody {
     let stream = futures::stream::unfold(
@@ -55,13 +60,13 @@ pub fn request_body_with_prefix(
             }
             let mut buffer = vec![0_u8; 16 * 1024];
             match recv.read(&mut buffer).await {
-                Ok(None) => {
+                Ok(0) => {
                     if let Some(capture) = &capture {
                         capture.complete_request();
                     }
                     None
                 }
-                Ok(Some(length)) => {
+                Ok(length) => {
                     if let Some(capture) = &capture {
                         capture.request_bytes(&buffer[..length]);
                     }
@@ -70,9 +75,10 @@ pub fn request_body_with_prefix(
                         (None, recv, capture),
                     ))
                 }
-                Err(error) => {
-                    Some((Err::<Frame<Bytes>, BoxError>(Box::new(error)), (None, recv, capture)))
-                }
+                Err(error) => Some((
+                    Err::<Frame<Bytes>, BoxError>(Box::new(PublicReadError(error))),
+                    (None, recv, capture),
+                )),
             }
         },
     );
@@ -80,10 +86,10 @@ pub fn request_body_with_prefix(
 }
 
 pub fn request_body(
-    recv: quinn::RecvStream,
+    recv: BoxRead,
     upgrade: bool,
     capture: Option<CaptureContext>,
-) -> (ClientBody, Option<quinn::RecvStream>) {
+) -> (ClientBody, Option<BoxRead>) {
     if upgrade {
         if let Some(capture) = &capture {
             capture.complete_request();
@@ -96,19 +102,22 @@ pub fn request_body(
     let stream = futures::stream::unfold((recv, capture), |(mut recv, capture)| async move {
         let mut buffer = vec![0_u8; 16 * 1024];
         match recv.read(&mut buffer).await {
-            Ok(None) => {
+            Ok(0) => {
                 if let Some(capture) = &capture {
                     capture.complete_request();
                 }
                 None
             }
-            Ok(Some(length)) => {
+            Ok(length) => {
                 if let Some(capture) = &capture {
                     capture.request_bytes(&buffer[..length]);
                 }
                 Some((Ok(Frame::data(Bytes::copy_from_slice(&buffer[..length]))), (recv, capture)))
             }
-            Err(error) => Some((Err::<Frame<Bytes>, BoxError>(Box::new(error)), (recv, capture))),
+            Err(error) => Some((
+                Err::<Frame<Bytes>, BoxError>(Box::new(PublicReadError(error))),
+                (recv, capture),
+            )),
         }
     });
     (StreamBody::new(stream).boxed_unsync(), None)
