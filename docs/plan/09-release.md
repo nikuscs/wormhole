@@ -85,7 +85,7 @@ and validate an untagged tree.
   (walk `docs/*.md`, extract ```toml blocks, parse against the config structs).
   Validation: that unit test passes.
 
-- [ ] **R6 — Prepare v0.1.0 metadata (untagged).** Keep the single workspace version at the
+- [x] **R6 — Prepare v0.1.0 metadata (untagged).** Keep the single workspace version at the
   unreleased `0.0.0` baseline. Add `CHANGELOG.md` (Keep a Changelog) with a populated
   `[Unreleased]` section whose comparison link targets the future `v0.1.0`; R2 converts that
   section to `[0.1.0] - YYYY-MM-DD` while performing its minor bump. Do not edit versions or
