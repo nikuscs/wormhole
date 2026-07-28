@@ -12,6 +12,52 @@ const META: TableDefinition<&str, u64> = TableDefinition::new("meta");
 const SERVICES: TableDefinition<&str, &[u8]> = TableDefinition::new("services");
 const SCHEMA_KEY: &str = "schema_version";
 
+/// Collision-free identity for one desired service.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct DesiredKey {
+    project_id: String,
+    service_name: String,
+}
+
+impl DesiredKey {
+    pub fn new(project_id: String, service_name: String) -> Result<Self, StateDbError> {
+        validate_project_id(&project_id)?;
+        validate_service_name(&service_name)?;
+        Ok(Self { project_id, service_name })
+    }
+
+    pub fn matches_project_target(&self, target: &str) -> bool {
+        !self.project_id.is_empty()
+            && target == format!("{}:{}", self.project_id, self.service_name)
+    }
+
+    fn storage_key(&self) -> Result<String, StateDbError> {
+        serde_json::to_string(&(&self.project_id, &self.service_name)).map_err(data_error)
+    }
+
+    fn legacy_key(&self) -> String {
+        format!("{}:{}", self.project_id, self.service_name)
+    }
+}
+
+fn validate_project_id(value: &str) -> Result<(), StateDbError> {
+    if value.chars().any(|character| character.is_control() || character == ':') {
+        return Err(StateDbError::Data(
+            "project identity must contain no ':' or control characters".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_service_name(value: &str) -> Result<(), StateDbError> {
+    if value.trim().is_empty() || value.chars().any(char::is_control) {
+        return Err(StateDbError::Data(
+            "service name must be non-empty and contain no control characters".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
 /// One desired service restored by the daemon.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DesiredService {
@@ -33,8 +79,8 @@ const fn default_active() -> bool {
 }
 
 impl DesiredService {
-    pub fn key(&self) -> String {
-        format!("{}:{}", self.project_id, self.service.name)
+    pub fn key(&self) -> Result<DesiredKey, StateDbError> {
+        DesiredKey::new(self.project_id.clone(), self.service.name.clone())
     }
 }
 
@@ -67,22 +113,28 @@ impl StateDb {
     }
 
     pub fn put(&self, desired: &DesiredService) -> Result<(), StateDbError> {
+        let key = desired.key()?;
+        let storage_key = key.storage_key()?;
         let encoded = serde_json::to_vec(desired).map_err(data_error)?;
         let mut transaction = self.database.begin_write().map_err(db_error)?;
         transaction.set_durability(Durability::Immediate).map_err(db_error)?;
         {
             let mut table = transaction.open_table(SERVICES).map_err(db_error)?;
-            table.insert(desired.key().as_str(), encoded.as_slice()).map_err(db_error)?;
+            table.remove(key.legacy_key().as_str()).map_err(db_error)?;
+            table.insert(storage_key.as_str(), encoded.as_slice()).map_err(db_error)?;
         }
         transaction.commit().map_err(db_error)
     }
 
-    pub fn delete(&self, name: &str) -> Result<bool, StateDbError> {
+    pub fn delete(&self, key: &DesiredKey) -> Result<bool, StateDbError> {
+        let storage_key = key.storage_key()?;
         let mut transaction = self.database.begin_write().map_err(db_error)?;
         transaction.set_durability(Durability::Immediate).map_err(db_error)?;
         let removed = {
             let mut table = transaction.open_table(SERVICES).map_err(db_error)?;
-            table.remove(name).map_err(db_error)?.is_some()
+            let current = table.remove(storage_key.as_str()).map_err(db_error)?.is_some();
+            let legacy = table.remove(key.legacy_key().as_str()).map_err(db_error)?.is_some();
+            current || legacy
         };
         transaction.commit().map_err(db_error)?;
         Ok(removed)
@@ -94,7 +146,10 @@ impl StateDb {
         let mut services = Vec::new();
         for entry in table.iter().map_err(db_error)? {
             let (_, value) = entry.map_err(db_error)?;
-            services.push(serde_json::from_slice(value.value()).map_err(data_error)?);
+            let desired: DesiredService =
+                serde_json::from_slice(value.value()).map_err(data_error)?;
+            let _validated = desired.key()?;
+            services.push(desired);
         }
         Ok(services)
     }

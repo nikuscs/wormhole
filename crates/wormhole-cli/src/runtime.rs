@@ -75,9 +75,7 @@ fn verify_directory(path: &Utf8Path) -> Result<(), RuntimeError> {
 }
 
 fn current_uid() -> u32 {
-    directories::BaseDirs::new()
-        .and_then(|dirs| fs::metadata(dirs.home_dir()).ok())
-        .map_or(0, |metadata| metadata.uid())
+    nix::unistd::geteuid().as_raw()
 }
 
 #[cfg(target_os = "macos")]
@@ -107,3 +105,7 @@ pub enum RuntimeError {
     #[error("runtime filesystem error: {0}")]
     Io(#[from] io::Error),
 }
+
+#[cfg(test)]
+#[path = "runtime_tests.rs"]
+mod tests;

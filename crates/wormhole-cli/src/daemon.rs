@@ -25,7 +25,7 @@ use wormhole_proto::frames::Persistence;
 use crate::{
     local_api::{ApiState, router},
     runtime::{RuntimePaths, open_private},
-    state_db::StateDb,
+    state_db::{DesiredKey, StateDb},
 };
 
 const DETACH_CHILD: &str = "WORMHOLE_DETACH_CHILD";
@@ -82,6 +82,7 @@ impl DaemonServer {
         let desired = Arc::new(RwLock::new(BTreeMap::new()));
         let bindings = Arc::new(RwLock::new(HashMap::new()));
         let persistence_lock = Arc::new(tokio::sync::Mutex::new(()));
+        let mutation_lock = Arc::new(tokio::sync::Mutex::new(()));
         let expose_lock = Arc::new(tokio::sync::Mutex::new(()));
         let state = ApiState {
             manager,
@@ -92,6 +93,7 @@ impl DaemonServer {
             desired,
             bindings,
             persistence_lock,
+            mutation_lock,
             expose_lock,
             captures: Arc::new(RwLock::new(crate::capture_store::CaptureStore::default())),
             started: jiff::Timestamp::now(),
@@ -125,13 +127,19 @@ async fn restore(state: &ApiState) {
     for mut desired in services {
         desired.endpoints.retain(|endpoint| endpoint.persist == Persistence::Persistent);
         desired.disabled_endpoints.retain(|endpoint| endpoint.persist == Persistence::Persistent);
+        let key = match desired.key() {
+            Ok(key) => key,
+            Err(error) => {
+                tracing::error!(%error, service = %desired.service.name, "invalid desired state");
+                continue;
+            }
+        };
         if desired.endpoints.is_empty() && desired.disabled_endpoints.is_empty() {
-            if let Err(error) = state.database.delete(&desired.key()) {
+            if let Err(error) = state.database.delete(&key) {
                 tracing::error!(%error, service = %desired.service.name, "temporary state cleanup failed");
             }
             continue;
         }
-        let key = desired.key();
         state.desired.write().await.insert(key.clone(), desired.clone());
         if !desired.active {
             continue;
@@ -212,8 +220,8 @@ async fn start_persistence(state: &ApiState) -> Result<(), DaemonError> {
 
 async fn persist_reservation(
     persistence_lock: &tokio::sync::Mutex<()>,
-    desired: &RwLock<BTreeMap<String, crate::state_db::DesiredService>>,
-    bindings: &RwLock<HashMap<uuid::Uuid, (String, usize)>>,
+    desired: &RwLock<BTreeMap<DesiredKey, crate::state_db::DesiredService>>,
+    bindings: &RwLock<HashMap<uuid::Uuid, (DesiredKey, usize)>>,
     database: &StateDb,
     endpoint: uuid::Uuid,
     reservation: uuid::Uuid,
@@ -239,9 +247,9 @@ async fn persist_reservation(
 }
 
 async fn wait_for_binding(
-    bindings: &RwLock<HashMap<uuid::Uuid, (String, usize)>>,
+    bindings: &RwLock<HashMap<uuid::Uuid, (DesiredKey, usize)>>,
     endpoint: uuid::Uuid,
-) -> Result<(String, usize), String> {
+) -> Result<(DesiredKey, usize), String> {
     let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(3);
     loop {
         let binding = bindings.read().await.get(&endpoint).cloned();

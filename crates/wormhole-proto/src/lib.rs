@@ -8,6 +8,8 @@ pub mod handshake;
 pub mod keys;
 pub mod mux;
 pub mod mux_runtime;
+mod mux_runtime_actor;
+mod mux_runtime_control;
 mod mux_runtime_io;
 mod mux_runtime_types;
 

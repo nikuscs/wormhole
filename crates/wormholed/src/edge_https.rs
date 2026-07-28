@@ -20,6 +20,7 @@ use crate::{
     buffer::{BufferError, buffer_request},
     certs::CertResolver,
     edge_auth::{LinkDecision, authorized, link_decision},
+    edge_types::forwarded_node,
     registry::{BindHandle, BindState, HostKey, HttpTunnelResponse, SessionCommand, UpgradeTunnel},
     session_streams::copy_bidirectional_idle,
     state::AppState,
@@ -298,7 +299,11 @@ fn request_head(
             value_b64: STANDARD.encode(value.as_bytes()),
         });
     }
-    append_header(&mut headers, "forwarded", &format!("for={};proto=https;host={sni}", peer.ip()));
+    append_header(
+        &mut headers,
+        "forwarded",
+        &format!("for={};proto=https;host={sni}", forwarded_node(peer.ip())),
+    );
     append_header(&mut headers, "x-forwarded-for", &peer.ip().to_string());
     append_header(&mut headers, "x-forwarded-proto", "https");
     HttpRequestHead {

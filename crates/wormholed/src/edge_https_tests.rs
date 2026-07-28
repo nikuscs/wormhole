@@ -4,6 +4,7 @@ use super::{
     connection_tokens, hostname_from_authority, is_forwarding_header, is_hop_header,
     valid_websocket_request, version_string,
 };
+use crate::edge_types::forwarded_node;
 
 #[test]
 fn authority_strips_public_port() {
@@ -21,6 +22,12 @@ fn edge_removes_hop_and_untrusted_forwarding_headers() {
         connection_tokens(["keep-alive, X-Private"].into_iter()),
         ["keep-alive", "x-private"]
     );
+}
+
+#[test]
+fn forwarded_nodes_quote_bracketed_ipv6() {
+    assert_eq!(forwarded_node("192.0.2.1".parse().expect("IPv4")), "192.0.2.1");
+    assert_eq!(forwarded_node("2001:db8::1".parse().expect("IPv6")), "\"[2001:db8::1]\"");
 }
 
 #[test]

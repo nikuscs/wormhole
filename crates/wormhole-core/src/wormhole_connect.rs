@@ -21,13 +21,13 @@ pub struct ConnectedTransport {
 
 pub async fn connect_transport(
     remote: &Remote,
-    identity: Identity,
+    identity: &Identity,
 ) -> Result<ConnectedTransport, DriverError> {
     match remote.transport {
         Transport::Quic => quic(remote, identity).await,
         Transport::Ws => websocket(remote, identity).await,
         Transport::Auto => {
-            match tokio::time::timeout(Duration::from_secs(3), connect_remote(remote, &identity))
+            match tokio::time::timeout(Duration::from_secs(3), connect_remote(remote, identity))
                 .await
             {
                 Ok(Ok((endpoint, connection, channel, limits))) => Ok(ConnectedTransport {
@@ -44,8 +44,8 @@ pub async fn connect_transport(
     }
 }
 
-async fn quic(remote: &Remote, identity: Identity) -> Result<ConnectedTransport, DriverError> {
-    let (endpoint, connection, channel, limits) = connect_remote(remote, &identity).await?;
+async fn quic(remote: &Remote, identity: &Identity) -> Result<ConnectedTransport, DriverError> {
+    let (endpoint, connection, channel, limits) = connect_remote(remote, identity).await?;
     Ok(ConnectedTransport {
         endpoint: Some(endpoint),
         connection: Some(connection),
@@ -55,8 +55,21 @@ async fn quic(remote: &Remote, identity: Identity) -> Result<ConnectedTransport,
     })
 }
 
-async fn websocket(remote: &Remote, identity: Identity) -> Result<ConnectedTransport, DriverError> {
-    let (channel, limits, mux_streams) = connect_remote_ws(remote, &identity).await?;
+/// Probes the configured transport, including automatic QUIC-to-WebSocket fallback.
+pub async fn probe_remote(remote: &Remote, identity: &Identity) -> Result<Transport, DriverError> {
+    let connected = connect_transport(remote, identity).await?;
+    let transport = if connected.endpoint.is_some() { Transport::Quic } else { Transport::Ws };
+    if let Some(connection) = connected.connection {
+        connection.close(0_u32.into(), b"doctor probe");
+    }
+    Ok(transport)
+}
+
+async fn websocket(
+    remote: &Remote,
+    identity: &Identity,
+) -> Result<ConnectedTransport, DriverError> {
+    let (channel, limits, mux_streams) = connect_remote_ws(remote, identity).await?;
     Ok(ConnectedTransport {
         endpoint: None,
         connection: None,

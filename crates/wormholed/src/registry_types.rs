@@ -60,6 +60,8 @@ pub enum SessionCommand {
     RemoveBind {
         /// Stable bind identifier.
         bind: Uuid,
+        /// Confirms that the session removed ownership and released its count.
+        acknowledged: oneshot::Sender<bool>,
     },
     /// Relay shutdown notification.
     Shutdown,

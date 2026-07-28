@@ -6,7 +6,7 @@ use crate::{
     api_expose::{
         expose_desired, failure_message, prepare_forget_bindings, restore_reservations, wait_ready,
     },
-    state_db::DesiredService,
+    state_db::{DesiredKey, DesiredService},
 };
 use axum::{
     Json, Router,
@@ -185,7 +185,9 @@ async fn create_service(
     Json(request): Json<CreateServiceRequest>,
 ) -> Result<(StatusCode, Json<Vec<ActiveEndpoint>>), ApiError> {
     let project_id = request.project_id.unwrap_or_default();
-    let desired_key = format!("{project_id}:{}", request.service.name);
+    let desired_key = DesiredKey::new(project_id.clone(), request.service.name.clone())
+        .map_err(|error| ApiError::invalid(error.to_string()))?;
+    let _mutation = state.mutation_lock.lock().await;
     let previous = state.desired.read().await.get(&desired_key).cloned();
     if previous.as_ref().is_some_and(|desired| desired.active) {
         return Err(ApiError::conflict(format!(
@@ -262,7 +264,7 @@ async fn create_service(
 async fn rollback_failed_create(
     state: &ApiState,
     ids: &[Uuid],
-    desired_key: &str,
+    desired_key: &DesiredKey,
     previous: Option<DesiredService>,
 ) -> Result<(), ApiError> {
     for id in ids {
@@ -271,7 +273,7 @@ async fn rollback_failed_create(
     let _persistence = state.persistence_lock.lock().await;
     if let Some(previous) = previous {
         state.database.put(&previous).map_err(|error| ApiError::internal(error.to_string()))?;
-        state.desired.write().await.insert(desired_key.to_owned(), previous);
+        state.desired.write().await.insert(desired_key.clone(), previous);
     } else {
         state
             .database
@@ -306,7 +308,9 @@ async fn delete_service(
     Path(name): Path<String>,
     Query(query): Query<DeleteQuery>,
 ) -> Result<Json<ClosedResponse>, ApiError> {
-    let key = format!("{}:{name}", query.project_id);
+    let key = DesiredKey::new(query.project_id, name)
+        .map_err(|error| ApiError::invalid(error.to_string()))?;
+    let _mutation = state.mutation_lock.lock().await;
     let mut desired = state.desired.read().await.get(&key).cloned();
     let mut bindings = state
         .bindings
@@ -394,6 +398,7 @@ async fn delete_endpoint(
     Path(id): Path<Uuid>,
     Query(query): Query<DeleteQuery>,
 ) -> Result<Json<ClosedResponse>, ApiError> {
+    let _mutation = state.mutation_lock.lock().await;
     let binding = state.bindings.read().await.get(&id).cloned();
     if let Err(error) = state.manager.close_with_forget(id, query.forget != 0).await {
         if let Some((key, index)) = binding

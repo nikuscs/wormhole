@@ -136,6 +136,28 @@ fn unknown_key_is_denied() {
 }
 
 #[test]
+fn client_ordering_errors_report_the_pre_failure_state() {
+    let identity = Identity::generate();
+    let mut early = ClientHandshake::new(&identity, "relay.example.com", "test-client");
+    let welcome =
+        ControlFrame::Welcome { session: uuid::Uuid::now_v7(), limits: limits(), motd: None };
+
+    let early_error = early.step(&welcome).expect_err("early welcome must fail");
+    assert!(early_error.to_string().contains("AwaitingChallenge"));
+    assert!(!early_error.to_string().contains("client is Failed"));
+
+    let mut late = ClientHandshake::new(&identity, "relay.example.com", "test-client");
+    let challenge = ControlFrame::Challenge {
+        nonce: STANDARD.encode([5_u8; 32]),
+        server: "relay.example.com".to_owned(),
+    };
+    late.step(&challenge).expect("first challenge");
+    let late_error = late.step(&challenge).expect_err("repeated challenge must fail");
+    assert!(late_error.to_string().contains("AwaitingWelcome"));
+    assert!(!late_error.to_string().contains("client is Failed"));
+}
+
+#[test]
 fn auth_before_hello_is_a_protocol_error() {
     let mut server =
         ServerHandshake::new("relay.example.com", limits(), None, |_| KeyDecision::Authorized);

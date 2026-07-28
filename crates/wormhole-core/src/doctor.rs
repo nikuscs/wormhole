@@ -8,7 +8,8 @@ use crate::{
     drivers::build_registry,
     keys_store::IdentityStore,
     model::DoctorCheck,
-    wormhole_transport::probe_remote,
+    remotes::Transport,
+    wormhole_connect::probe_remote,
 };
 
 /// Runs diagnostics using environment configuration and the built-in Wormhole driver.
@@ -61,16 +62,21 @@ pub async fn doctor_with(
             let path = identities.path_for_remote(remote);
             checks.push(identity_check(&format!("identity:{name}"), &path));
         }
-        let result =
-            tokio::time::timeout(std::time::Duration::from_secs(3), probe_remote(remote)).await;
+        let result = identities.resolve_identity(remote).map_err(|error| error.to_string());
+        let result = match result {
+            Ok(identity) => tokio::time::timeout(
+                std::time::Duration::from_secs(8),
+                probe_remote(remote, &identity),
+            )
+            .await
+            .map_err(|_| "configured transport probe timed out".to_owned())
+            .and_then(|result| result.map_err(|error| error.to_string())),
+            Err(error) => Err(error),
+        };
         checks.push(DoctorCheck {
             name: format!("remote:{name}"),
-            healthy: matches!(result, Ok(Ok(()))),
-            detail: match result {
-                Ok(Ok(())) => "QUIC/TLS reachable".to_owned(),
-                Ok(Err(error)) => error.to_string(),
-                Err(_) => "QUIC/TLS probe timed out".to_owned(),
-            },
+            healthy: result.is_ok(),
+            detail: result.map_or_else(|error| error, transport_detail),
         });
     }
     for driver in registry.all() {
@@ -86,6 +92,14 @@ pub async fn doctor_with(
         }
     }
     checks
+}
+
+fn transport_detail(transport: Transport) -> String {
+    match transport {
+        Transport::Quic => "QUIC/TLS reachable".to_owned(),
+        Transport::Ws => "WebSocket/TLS reachable".to_owned(),
+        Transport::Auto => unreachable!("transport probe resolves auto mode"),
+    }
 }
 
 fn identity_check(name: &str, path: &camino::Utf8Path) -> DoctorCheck {

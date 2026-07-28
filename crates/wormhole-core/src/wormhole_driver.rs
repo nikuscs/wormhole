@@ -101,10 +101,7 @@ impl WormholeDriver {
         let mut backoff = INITIAL_BACKOFF;
         loop {
             if stop.is_cancelled() {
-                let cleanup =
-                    self.forget_reservation(&remote, &spec, target, &events, &forget).await;
-                let _closed = events.send(DriverEvent::Closed).await;
-                return cleanup;
+                return self.stop_endpoint(&remote, &spec, target, &events, &forget).await;
             }
             if attempts > 0 {
                 let _status =
@@ -160,15 +157,25 @@ impl WormholeDriver {
             let jitter = rand::rng().random_range(0..=max_millis);
             tokio::select! {
                 () = stop.cancelled() => {
-                    let cleanup =
-                        self.forget_reservation(&remote, &spec, target, &events, &forget).await;
-                    let _closed = events.send(DriverEvent::Closed).await;
-                    return cleanup;
+                    return self.stop_endpoint(&remote, &spec, target, &events, &forget).await;
                 }
                 () = tokio::time::sleep(Duration::from_millis(jitter)) => {}
             }
             backoff = backoff.saturating_mul(2).min(MAX_BACKOFF);
         }
+    }
+
+    async fn stop_endpoint(
+        &self,
+        remote: &str,
+        spec: &EndpointSpec,
+        target: ResolvedTarget,
+        events: &mpsc::Sender<DriverEvent>,
+        forget: &watch::Receiver<bool>,
+    ) -> Result<(), DriverError> {
+        let cleanup = self.forget_reservation(remote, spec, target, events, forget).await;
+        let _closed = events.send(DriverEvent::Closed).await;
+        cleanup
     }
 
     async fn forget_reservation(

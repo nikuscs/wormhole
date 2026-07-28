@@ -1,5 +1,12 @@
 //! Errors shared by public edge listeners.
 
+pub fn forwarded_node(ip: std::net::IpAddr) -> String {
+    match ip {
+        std::net::IpAddr::V4(ip) => ip.to_string(),
+        std::net::IpAddr::V6(ip) => format!("\"[{ip}]\""),
+    }
+}
+
 /// Public HTTP edge failure.
 #[derive(Debug, thiserror::Error)]
 pub enum EdgeError {

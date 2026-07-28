@@ -7,7 +7,7 @@ use wormhole_core::{ActiveEndpoint, EndpointSpec, TunnelManager, model::Endpoint
 
 use crate::{
     api_types::{ApiError, ApiState},
-    state_db::DesiredService,
+    state_db::{DesiredKey, DesiredService},
 };
 
 pub fn failure_message(endpoints: &[ActiveEndpoint]) -> String {
@@ -92,7 +92,7 @@ pub async fn expose_desired(
 
 pub async fn prepare_forget_bindings(
     state: &ApiState,
-    key: &str,
+    key: &DesiredKey,
     desired: &mut Option<DesiredService>,
     mut bindings: Vec<(Uuid, usize)>,
 ) -> Result<Vec<(Uuid, usize)>, ApiError> {
@@ -102,7 +102,7 @@ pub async fn prepare_forget_bindings(
         cached.endpoints.append(&mut cached.disabled_endpoints);
         let _persistence = state.persistence_lock.lock().await;
         state.database.put(cached).map_err(|error| ApiError::internal(error.to_string()))?;
-        state.desired.write().await.insert(key.to_owned(), cached.clone());
+        state.desired.write().await.insert(key.clone(), cached.clone());
     }
     let Some(cached) = desired else {
         return Ok(bindings);
@@ -124,7 +124,7 @@ pub async fn prepare_forget_bindings(
         .map_err(|error| ApiError::unavailable(error.to_string()))?;
     for ((index, _), id) in missing.into_iter().zip(restarted) {
         bindings.push((id, index));
-        state.bindings.write().await.insert(id, (key.to_owned(), index));
+        state.bindings.write().await.insert(id, (key.clone(), index));
     }
     let ids = bindings.iter().map(|(id, _)| *id).collect::<Vec<_>>();
     let _ready = wait_ready(&state.manager, &ids).await;

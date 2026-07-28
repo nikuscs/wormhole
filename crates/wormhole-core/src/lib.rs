@@ -9,6 +9,7 @@ pub mod error;
 pub mod ifaces;
 pub mod keys_store;
 pub mod manager;
+mod manager_events;
 mod manager_status;
 pub mod model;
 pub mod ports;

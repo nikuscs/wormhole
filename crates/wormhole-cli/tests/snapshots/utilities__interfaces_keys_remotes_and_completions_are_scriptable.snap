@@ -683,7 +683,7 @@ _arguments "${_arguments_options[@]}" : \
 '--help[Print help]' \
 '-V[Print version]' \
 '--version[Print version]' \
-':target -- Service name or endpoint identifier:_default' \
+':target -- Service name, project\:service identity, or endpoint identifier:_default' \
 && ret=0
 ;;
 (help)

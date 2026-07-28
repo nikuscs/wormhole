@@ -1,4 +1,9 @@
-use super::{handshake_limiter, server_config};
+use std::time::Duration;
+
+use super::{
+    IDLE_TIMEOUT, KEEP_ALIVE, bounded_max_streams, cleanup_limiter, handshake_limiter,
+    server_config,
+};
 use crate::certs::CertManager;
 use crate::config::{
     AuthConfig, LimitsConfig, PortRange, ServerConfig, TcpConfig, TlsConfig, TlsMode,
@@ -6,6 +11,15 @@ use crate::config::{
 };
 use camino::Utf8Path;
 use tempfile::tempdir;
+
+#[test]
+fn websocket_advertises_no_more_streams_than_mux_enforces() {
+    assert_eq!(
+        bounded_max_streams(1024, wormhole_proto::mux_runtime::MAX_STREAMS),
+        wormhole_proto::mux_runtime::MAX_STREAMS
+    );
+    assert_eq!(bounded_max_streams(8, wormhole_proto::mux_runtime::MAX_STREAMS), 8);
+}
 
 #[test]
 fn thirty_first_handshake_from_one_ip_is_rate_limited() {
@@ -16,6 +30,22 @@ fn thirty_first_handshake_from_one_ip_is_rate_limited() {
     }
     assert!(limiter.check_key(&ip).is_err());
     assert!(limiter.check_key(&"127.0.0.2".parse().expect("other IP")).is_ok());
+}
+
+#[tokio::test]
+async fn stale_handshake_limiter_entries_are_evicted() {
+    let limiter = handshake_limiter(6000).expect("limiter");
+    assert!(limiter.check_key(&"127.0.0.1".parse().expect("IP")).is_ok());
+    assert_eq!(limiter.len(), 1);
+    tokio::time::sleep(Duration::from_millis(20)).await;
+    cleanup_limiter(&limiter);
+    assert_eq!(limiter.len(), 0);
+}
+
+#[test]
+fn quic_operational_timings_match_contract() {
+    assert_eq!(KEEP_ALIVE, Duration::from_secs(15));
+    assert_eq!(IDLE_TIMEOUT.as_secs(), 60);
 }
 
 #[tokio::test]

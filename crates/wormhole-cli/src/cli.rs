@@ -250,7 +250,7 @@ pub enum CompletionShell {
 
 #[derive(Debug, Args)]
 pub struct ShareArgs {
-    /// Service name or endpoint identifier.
+    /// Service name, project:service identity, or endpoint identifier.
     pub target: String,
     /// Share-link lifetime.
     #[arg(long, default_value = "24h")]

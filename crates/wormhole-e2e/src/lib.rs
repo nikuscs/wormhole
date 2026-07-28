@@ -4,6 +4,9 @@
 pub mod harness;
 mod helpers;
 #[cfg(test)]
+#[path = "helpers_tests.rs"]
+mod helpers_tests;
+#[cfg(test)]
 mod relay_control;
 #[cfg(test)]
 #[path = "security_tests.rs"]

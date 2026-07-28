@@ -135,6 +135,25 @@ fn validation_rejects_invalid_remote_references_addresses_and_defaults() {
 }
 
 #[test]
+fn project_only_name_and_service_keys_are_not_retained_as_unknown_config() {
+    let directory = tempdir().expect("temporary directory");
+    let root = Utf8Path::from_path(directory.path()).expect("UTF-8 path");
+    let project = root.join("wormhole.toml");
+    std::fs::write(
+        &project,
+        "name = \"app\"\n[[service]]\nname = \"web\"\ntarget = \"3000\"\nproto = \"http\"\n",
+    )
+    .expect("project config");
+
+    let config = ClientConfig::load_from_paths(None, Some(&project), ConfigLayer::default())
+        .expect("client config");
+    let encoded = toml::to_string(&config).expect("encode");
+
+    assert!(!encoded.contains("name = \"app\""));
+    assert!(!encoded.contains("[[service]]"));
+}
+
+#[test]
 fn malformed_optional_config_is_reported() {
     let directory = tempfile::tempdir().expect("tempdir");
     let path =

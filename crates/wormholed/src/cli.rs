@@ -422,9 +422,15 @@ async fn binds(path: &Utf8Path, args: BindsArgs) -> Result<()> {
         )
         .await
         {
-            Ok(_) => output::human(&format!("removed {id}")),
+            Ok(response) => {
+                response.require_success()?;
+                output::human(&format!("removed {id}"));
+            }
             Err(wormholed::admin_client::AdminClientError::Connect(_)) => {
                 let database = wormholed::db::RelayDb::open(&config.server.data_dir)?;
+                if database.get_bind(id)?.is_none() {
+                    anyhow::bail!("bind not found: {id}");
+                }
                 database.delete_bind_data(id)?;
                 output::human(&format!("removed {id}"));
             }

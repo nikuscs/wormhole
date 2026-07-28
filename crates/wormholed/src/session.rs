@@ -135,8 +135,8 @@ impl<S: AsyncRead + AsyncWrite + Unpin> SessionActor<S> {
                                 failed,
                             }).await?;
                         }
-                        Some(SessionCommand::RemoveBind { bind }) => {
-                            self.release_deleted_bind(bind);
+                        Some(SessionCommand::RemoveBind { bind, acknowledged }) => {
+                            let _acknowledged = acknowledged.send(self.release_deleted_bind(bind));
                         }
                         Some(SessionCommand::Shutdown) => {
                             self.channel.send(&ControlFrame::Event {
@@ -359,12 +359,13 @@ impl<S: AsyncRead + AsyncWrite + Unpin> SessionActor<S> {
         })
     }
 
-    fn release_deleted_bind(&mut self, bind: Uuid) {
+    fn release_deleted_bind(&mut self, bind: Uuid) -> bool {
         self.state.release_buffered_bind(bind);
         if self.binds.remove(&bind).is_none() {
-            return;
+            return false;
         }
         self.state.remove_bind(&self.fingerprint);
+        true
     }
 
     fn cleanup(&mut self) {

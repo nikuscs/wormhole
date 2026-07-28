@@ -11,7 +11,7 @@ use crate::{
     model::{EndpointSpec, ServiceProto},
 };
 
-use super::{CommandResult, TailscaleApi, TailscaleDriver, install_args};
+use super::{CommandResult, TailscaleApi, TailscaleDriver, install_args, public_url};
 
 struct FakeApi {
     calls: Mutex<Vec<Vec<String>>>,
@@ -209,6 +209,48 @@ fn status_comparison_ignores_unrelated_public_bindings() {
         crate::drivers::tailscale_state::binding_snapshot(first, &endpoint, target),
         crate::drivers::tailscale_state::binding_snapshot(second, &endpoint, target)
     );
+}
+
+#[test]
+fn funnel_http_supports_documented_public_ports() {
+    let api = Arc::new(FakeApi { calls: Mutex::new(Vec::new()), installed: Mutex::new(None) });
+    let driver = TailscaleDriver::with_api(api);
+    let target = crate::ResolvedTarget("127.0.0.1:3000".parse().expect("target"));
+    for port in [443, 8443, 10000] {
+        let mut endpoint = spec(Some("funnel"));
+        endpoint.public_port = Some(port);
+        driver.validate(&endpoint).expect("supported Funnel port");
+        assert_eq!(
+            install_args("funnel", &endpoint, target, true),
+            vec![
+                "funnel".to_owned(),
+                "--bg".to_owned(),
+                format!("--https={port}"),
+                "http://127.0.0.1:3000".to_owned(),
+            ]
+        );
+        let expected = if port == 443 {
+            "https://node.example.ts.net".to_owned()
+        } else {
+            format!("https://node.example.ts.net:{port}")
+        };
+        assert_eq!(public_url(ServiceProto::Http, "node.example.ts.net", port), expected);
+    }
+}
+
+#[test]
+fn funnel_http_claims_configured_public_port() {
+    let api = Arc::new(FakeApi { calls: Mutex::new(Vec::new()), installed: Mutex::new(None) });
+    let driver = TailscaleDriver::with_api(api);
+    let target = crate::ResolvedTarget("127.0.0.1:3000".parse().expect("target"));
+    let mut first = spec(Some("funnel"));
+    first.public_port = Some(8443);
+    let mut second = spec(Some("funnel"));
+    second.public_port = Some(10000);
+    let first_claim = driver.claim_binding(&first, target).expect("8443 claim");
+    assert!(driver.claim_binding(&first, target).is_err());
+    assert!(driver.claim_binding(&second, target).is_ok());
+    drop(first_claim);
 }
 
 #[test]

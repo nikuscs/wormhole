@@ -59,23 +59,27 @@ impl Remote {
         }
     }
 
-    /// Resolves the configured UDP authority.
-    pub async fn resolve_addr(&self) -> Result<SocketAddr, ConfigError> {
+    /// Resolves every address for the configured UDP authority.
+    pub async fn resolve_addrs(&self) -> Result<Vec<SocketAddr>, ConfigError> {
         resolve_authority(&self.addr).await
     }
 
-    /// Resolves the configured HTTPS authority or the standard relay port.
-    pub async fn resolve_https_addr(&self) -> Result<SocketAddr, ConfigError> {
+    /// Resolves every address for the configured HTTPS authority or standard relay port.
+    pub async fn resolve_https_addrs(&self) -> Result<Vec<SocketAddr>, ConfigError> {
         let authority =
             self.https_addr.clone().unwrap_or_else(|| format!("{}:443", self.server_name));
         resolve_authority(&authority).await
     }
 }
 
-async fn resolve_authority(authority: &str) -> Result<SocketAddr, ConfigError> {
-    tokio::net::lookup_host(authority)
+async fn resolve_authority(authority: &str) -> Result<Vec<SocketAddr>, ConfigError> {
+    let addresses = tokio::net::lookup_host(authority)
         .await
         .map_err(|error| ConfigError::Invalid(format!("cannot resolve {authority}: {error}")))?
-        .next()
-        .ok_or_else(|| ConfigError::Invalid(format!("remote has no address: {authority}")))
+        .collect::<Vec<_>>();
+    if addresses.is_empty() {
+        Err(ConfigError::Invalid(format!("remote has no address: {authority}")))
+    } else {
+        Ok(addresses)
+    }
 }

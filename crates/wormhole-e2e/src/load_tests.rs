@@ -16,13 +16,11 @@ fn load_smoke_streaming_upload_and_fd_stability() {
     let endpoints = client.expose_http(echo.port(), &["--host", "load"]).expect("expose");
     let url = format!("{}/load", endpoints[0].urls[0].trim_end_matches('/'));
     let pid = daemon_pid(&client);
-    let before = fd_count(pid);
+    let before = fd_count(pid).expect("fd count before load");
     run_http_load(&client, &relay, &url);
     std::thread::sleep(Duration::from_millis(200));
-    let after = fd_count(pid);
-    if before > 0 && after > 0 {
-        assert!(after <= before + 5, "fd count grew from {before} to {after}");
-    }
+    let after = fd_count(pid).expect("fd count after load");
+    assert!(after <= before + 5, "fd count grew from {before} to {after}");
 
     let upload = UploadServer::start().expect("upload server");
     let endpoints = client
@@ -123,13 +121,41 @@ fn daemon_pid(client: &TestClient) -> u32 {
     status["pid"].as_u64().expect("daemon pid") as u32
 }
 
-fn fd_count(pid: u32) -> usize {
+fn fd_count(pid: u32) -> Result<usize, String> {
     let proc_path = format!("/proc/{pid}/fd");
-    if let Ok(entries) = std::fs::read_dir(proc_path) {
-        return entries.count();
+    if std::path::Path::new(&proc_path).exists() {
+        let entries =
+            std::fs::read_dir(&proc_path).map_err(|error| format!("read {proc_path}: {error}"))?;
+        let count = entries
+            .map(|entry| entry.map_err(|error| format!("read {proc_path} entry: {error}")))
+            .collect::<Result<Vec<_>, _>>()?
+            .len();
+        return nonzero_fd_count(count, &proc_path);
     }
-    let output = Command::new("lsof").args(["-a", "-p", &pid.to_string(), "-Fn"]).output();
-    output.map_or(0, |output| {
-        String::from_utf8_lossy(&output.stdout).lines().filter(|line| line.starts_with('f')).count()
-    })
+    let output = Command::new("lsof")
+        .args(["-a", "-p", &pid.to_string(), "-Fn"])
+        .output()
+        .map_err(|error| format!("run lsof: {error}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "lsof exited with {}: {}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+    let count = String::from_utf8(output.stdout)
+        .map_err(|error| format!("lsof output was not UTF-8: {error}"))?
+        .lines()
+        .filter(|line| line.starts_with('f'))
+        .count();
+    nonzero_fd_count(count, "lsof")
+}
+
+fn nonzero_fd_count(count: usize, source: &str) -> Result<usize, String> {
+    if count == 0 { Err(format!("{source} reported no file descriptors")) } else { Ok(count) }
+}
+
+#[test]
+fn fd_count_reports_current_process_descriptors() {
+    assert!(fd_count(std::process::id()).expect("current process fd count") > 0);
 }

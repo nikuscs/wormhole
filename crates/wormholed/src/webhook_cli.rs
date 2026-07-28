@@ -56,7 +56,10 @@ pub async fn run(path: &Utf8Path, args: WebhookArgs) -> Result<()> {
                     )
                     .await
                     {
-                        Ok(response) => serde_json::from_slice(&response.body)?,
+                        Ok(response) => {
+                            let response = response.require_success()?;
+                            serde_json::from_slice(&response.body)?
+                        }
                         Err(wormholed::admin_client::AdminClientError::Connect(_)) => {
                             let database = wormholed::db::RelayDb::open(&config.server.data_dir)?;
                             database
@@ -103,13 +106,18 @@ async fn mutate(
     )
     .await
     {
-        Ok(_) => {}
+        Ok(response) => {
+            response.require_success()?;
+        }
         Err(wormholed::admin_client::AdminClientError::Connect(_)) => {
             let database = wormholed::db::RelayDb::open(&config.server.data_dir)?;
-            if retry {
-                database.retry_failed(bind, seq)?;
+            let found = if retry {
+                database.retry_failed(bind, seq)?
             } else {
-                database.delete_failed(bind, seq)?;
+                database.delete_failed(bind, seq)?
+            };
+            if !found {
+                anyhow::bail!("failed webhook not found: {bind}/{seq}");
             }
         }
         Err(error) => return Err(error.into()),

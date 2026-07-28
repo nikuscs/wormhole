@@ -36,13 +36,21 @@ pub async fn buffer_request(
     state: &AppState,
 ) -> Result<u64, BufferError> {
     let policy = bind.buffer_policy.as_ref().ok_or(BufferError::Unavailable)?;
-    let (parts, mut body) = request.into_parts();
+    let key_limit = crate::config::parse_byte_size(&state.limits.buffer_max_bytes_per_key)
+        .map_err(|error| BufferError::Quota(error.to_string()))?;
+    let total_limit = crate::config::parse_byte_size(&state.limits.buffer_max_bytes_total)
+        .map_err(|error| BufferError::Quota(error.to_string()))?;
+    let body_limit = policy.max_body_bytes.min(key_limit).min(total_limit);
+    let (parts, mut incoming) = request.into_parts();
+    let mut memory = state.reserve_buffer_memory();
     let read = async {
         let mut collected = Vec::new();
-        while let Some(frame) = body.frame().await {
+        while let Some(frame) = incoming.frame().await {
             let frame = frame.map_err(|error| BufferError::Body(error.to_string()))?;
             if let Ok(data) = frame.into_data() {
-                if collected.len().saturating_add(data.len()) as u64 > policy.max_body_bytes {
+                if collected.len().saturating_add(data.len()) as u64 > body_limit
+                    || !memory.reserve(data.len(), total_limit)
+                {
                     return Err(BufferError::BodyTooLarge);
                 }
                 collected.extend_from_slice(&data);
@@ -53,31 +61,16 @@ pub async fn buffer_request(
     let body = tokio::time::timeout(Duration::from_secs(30), read)
         .await
         .map_err(|_| BufferError::Deadline)??;
-    let headers = parts
-        .headers
-        .iter()
-        .map(|(name, value)| HeaderField {
-            name: name.as_str().to_owned(),
-            value_b64: base64::Engine::encode(
-                &base64::engine::general_purpose::STANDARD,
-                value.as_bytes(),
-            ),
-        })
-        .collect();
     let buffered = BufferedRequest {
         v: 1,
         method: parts.method.to_string(),
-        uri: parts.uri.path_and_query().map_or("/", http::uri::PathAndQuery::as_str).to_owned(),
+        uri: sanitized_uri(&parts.uri),
         http_version: "HTTP/1.1".to_owned(),
-        headers,
+        headers: durable_headers(&parts.headers, bind),
         body,
         seq: 0,
         received_at: jiff::Timestamp::now(),
     };
-    let key_limit = crate::config::parse_byte_size(&state.limits.buffer_max_bytes_per_key)
-        .map_err(|error| BufferError::Quota(error.to_string()))?;
-    let total_limit = crate::config::parse_byte_size(&state.limits.buffer_max_bytes_total)
-        .map_err(|error| BufferError::Quota(error.to_string()))?;
     state
         .database
         .enqueue_buffered(
@@ -129,7 +122,9 @@ async fn drain(state: &AppState, handle: &BindHandle) -> Result<(), BufferError>
         return Ok(());
     }
     if let Err(error) = deliver(handle, &request).await {
-        tracing::warn!(bind = %handle.bind_id, seq = request.seq, %error, "buffered delivery remains pending");
+        // A local delivery failure closes the data stream before its Nack can reach the control
+        // stream. Keep the claim until that result arrives or session cleanup releases the bind.
+        tracing::warn!(bind = %handle.bind_id, seq = request.seq, %error, "buffered delivery awaiting result or reconnect");
     }
     Ok(())
 }
@@ -168,6 +163,59 @@ async fn deliver(handle: &BindHandle, request: &BufferedRequest) -> Result<(), B
         chunk.map_err(BufferError::Body)?;
     }
     Ok(())
+}
+
+fn durable_headers(headers: &http::HeaderMap, bind: &BindHandle) -> Vec<HeaderField> {
+    let strip_authorization =
+        bind.auth.as_ref().is_some_and(|auth| auth.basic.is_some() || auth.bearer.is_some())
+            || bind
+                .auth_verifier()
+                .is_some_and(|auth| auth.basic_argon2.is_some() || auth.bearer_sha256.is_some());
+    headers
+        .iter()
+        .filter_map(|(name, value)| {
+            if strip_authorization && name == http::header::AUTHORIZATION {
+                return None;
+            }
+            let value = if name == http::header::COOKIE {
+                sanitized_cookie(value)?
+            } else {
+                value.as_bytes().to_vec()
+            };
+            Some(HeaderField {
+                name: name.as_str().to_owned(),
+                value_b64: base64::Engine::encode(
+                    &base64::engine::general_purpose::STANDARD,
+                    value,
+                ),
+            })
+        })
+        .collect()
+}
+
+fn sanitized_cookie(value: &http::HeaderValue) -> Option<Vec<u8>> {
+    let cookies = value.to_str().ok()?;
+    let kept = cookies
+        .split(';')
+        .map(str::trim)
+        .filter(|cookie| !cookie.starts_with("wormhole_auth="))
+        .collect::<Vec<_>>()
+        .join("; ");
+    (!kept.is_empty()).then(|| kept.into_bytes())
+}
+
+fn sanitized_uri(uri: &http::Uri) -> String {
+    let query = uri
+        .query()
+        .map(|query| {
+            query
+                .split('&')
+                .filter(|part| !part.starts_with("wh_token="))
+                .collect::<Vec<_>>()
+                .join("&")
+        })
+        .filter(|query| !query.is_empty());
+    query.map_or_else(|| uri.path().to_owned(), |query| format!("{}?{query}", uri.path()))
 }
 
 /// Offline buffering failure mapped to stable edge statuses.

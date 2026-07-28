@@ -8,6 +8,8 @@ use crate::frames::StreamHeader;
 
 pub const INITIAL_WINDOW: u32 = 256 * 1024;
 pub const MAX_PAYLOAD: usize = 64 * 1024;
+/// Maximum payload for channel-zero mux envelopes, including `Open` stream headers.
+pub const MAX_CONTROL_PAYLOAD: usize = MAX_PAYLOAD + 1024;
 pub const MAX_QUEUED_BYTES: usize = 2 * 1024 * 1024;
 pub const MAX_QUEUED_MESSAGES_PER_CHANNEL: usize = 64;
 
@@ -36,7 +38,7 @@ pub struct WsMessage {
 
 impl WsMessage {
     pub fn encode(&self) -> Result<Vec<u8>, MuxError> {
-        if self.payload.len() > MAX_PAYLOAD {
+        if self.payload.len() > payload_limit(self.channel) {
             return Err(MuxError::PayloadTooLarge);
         }
         let mut encoded = Vec::with_capacity(4 + self.payload.len());
@@ -46,12 +48,19 @@ impl WsMessage {
     }
 
     pub fn decode(encoded: &[u8]) -> Result<Self, MuxError> {
-        if encoded.len() < 4 || encoded.len() - 4 > MAX_PAYLOAD {
+        if encoded.len() < 4 {
             return Err(MuxError::PayloadTooLarge);
         }
         let channel = u32::from_be_bytes(encoded[..4].try_into().expect("four bytes"));
+        if encoded.len() - 4 > payload_limit(channel) {
+            return Err(MuxError::PayloadTooLarge);
+        }
         Ok(Self { channel, payload: encoded[4..].to_vec() })
     }
+}
+
+const fn payload_limit(channel: u32) -> usize {
+    if channel == 0 { MAX_CONTROL_PAYLOAD } else { MAX_PAYLOAD }
 }
 
 #[derive(Debug, Clone)]
@@ -181,7 +190,7 @@ pub enum MuxError {
     UnknownChannel,
     #[error("invalid mux channel state")]
     InvalidState,
-    #[error("mux payload exceeds 64 KiB")]
+    #[error("mux payload exceeds its channel limit")]
     PayloadTooLarge,
     #[error("mux outbound queue exceeds its aggregate quota")]
     QueueFull,

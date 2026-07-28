@@ -38,6 +38,27 @@ fn status_can_require_a_running_relay() {
 }
 
 #[test]
+fn offline_mutations_reject_missing_records() {
+    let directory = tempdir().expect("temporary directory");
+    let config = directory.path().join("wormholed.toml");
+    let missing = uuid::Uuid::now_v7().to_string();
+    cargo_bin_cmd!("wormholed").args(["init", "--config"]).arg(&config).assert().success();
+
+    cargo_bin_cmd!("wormholed")
+        .args(["binds", "rm", &missing, "--config"])
+        .arg(&config)
+        .assert()
+        .failure()
+        .stderr(contains("bind not found"));
+    cargo_bin_cmd!("wormholed")
+        .args(["webhooks", "failed", "rm", &missing, "1", "--config"])
+        .arg(&config)
+        .assert()
+        .failure()
+        .stderr(contains("failed webhook not found"));
+}
+
+#[test]
 fn key_commands_persist_authorization_and_revocation() {
     let directory = tempdir().expect("temporary directory");
     let config = directory.path().join("wormholed.toml");

@@ -5,7 +5,7 @@ use base64::{
     Engine as _,
     engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD},
 };
-use hmac::{Hmac, Mac as _};
+use hmac::{Hmac, KeyInit as _, Mac as _};
 use hyper::{Request, body::Incoming};
 use sha2::{Digest, Sha256};
 use subtle::ConstantTimeEq;

@@ -1,6 +1,6 @@
 //! Daemon operational log commands.
 
-use std::time::Duration;
+use std::{io, time::Duration};
 
 use crate::{error::CliError, output, runtime::RuntimePaths};
 
@@ -8,7 +8,7 @@ pub async fn logs(follow: bool) -> Result<(), CliError> {
     let paths = RuntimePaths::discover()?;
     let mut offset = 0_usize;
     loop {
-        let content = tokio::fs::read(&paths.log).await.unwrap_or_default();
+        let content = read_log(&paths.log).await?;
         if content.len() < offset {
             offset = 0;
         }
@@ -25,3 +25,15 @@ pub async fn logs(follow: bool) -> Result<(), CliError> {
         }
     }
 }
+
+async fn read_log(path: &camino::Utf8Path) -> Result<Vec<u8>, io::Error> {
+    match tokio::fs::read(path).await {
+        Ok(content) => Ok(content),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(Vec::new()),
+        Err(error) => Err(error),
+    }
+}
+
+#[cfg(test)]
+#[path = "daemon_commands_tests.rs"]
+mod tests;

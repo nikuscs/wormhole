@@ -1,10 +1,15 @@
+use base64::Engine as _;
 use jiff::Timestamp;
+use tokio::sync::mpsc;
 use uuid::Uuid;
-use wormhole_proto::frames::{BufferPolicy, Persistence};
+use wormhole_proto::frames::{BindSpec, BufferPolicy, EdgeAuth, Persistence};
 
+use super::{durable_headers, sanitized_cookie, sanitized_uri};
 use crate::{
     buffer::BufferedRequest,
+    config::PortRange,
     db::{BufferQuotas, PersistedBind, PersistedBindSpec, PersistedEndpoint, RelayDb},
+    registry::{AllocationRequest, Registry},
 };
 
 fn request(body: &[u8]) -> BufferedRequest {
@@ -101,6 +106,54 @@ fn expired_rows_are_pruned_before_quota_checks() {
         .enqueue_buffered(bind, "WH256:test", request(b"new"), quotas(1, 1, 16_384))
         .expect("replacement");
     assert_eq!(database.buffered_counts(bind).expect("counts"), (1, 0));
+}
+
+#[test]
+fn durable_request_strips_relay_credentials() {
+    let registry = Registry::new(
+        vec!["example.com".to_owned()],
+        None,
+        443,
+        PortRange { start: 10_000, end: 10_001 },
+    );
+    let (session_tx, _session_rx) = mpsc::channel(1);
+    let allocation = registry
+        .allocate(AllocationRequest {
+            key_fpr: "WH256:test".to_owned(),
+            spec: BindSpec::Http {
+                host: Some("hook".to_owned()),
+                domain: None,
+                persist: Persistence::Persistent,
+                buffer: Some(BufferPolicy { max_requests: 1, max_body_bytes: 1024, ttl_secs: 60 }),
+                auth: Some(EdgeAuth {
+                    basic: None,
+                    bearer: Some("secret".to_owned()),
+                    link_key: None,
+                }),
+            },
+            reservation: None,
+            session_tx,
+        })
+        .expect("allocation");
+    let handle = registry.get_bind(allocation.bind).expect("handle");
+    let mut headers = http::HeaderMap::new();
+    headers.insert(http::header::AUTHORIZATION, "Bearer secret".parse().expect("auth"));
+    headers
+        .insert(http::header::COOKIE, "theme=dark; wormhole_auth=token".parse().expect("cookie"));
+
+    let durable = durable_headers(&headers, &handle);
+
+    assert_eq!(durable.len(), 1);
+    assert_eq!(durable[0].name, "cookie");
+    assert_eq!(
+        base64::engine::general_purpose::STANDARD.decode(&durable[0].value_b64).expect("cookie"),
+        b"theme=dark"
+    );
+    assert_eq!(
+        sanitized_uri(&"/hook?wh_token=secret&event=push".parse().expect("URI")),
+        "/hook?event=push"
+    );
+    assert!(sanitized_cookie(&"wormhole_auth=secret".parse().expect("cookie")).is_none());
 }
 
 #[test]

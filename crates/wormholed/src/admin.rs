@@ -141,14 +141,20 @@ async fn delete_bind(
         .into_iter()
         .find_map(|(_, handle)| (handle.bind_id == id).then_some(handle))
         .ok_or_else(|| not_found("bind not found"))?;
-    let session_notified = if let Some(session) = handle.session() {
-        session.send(SessionCommand::RemoveBind { bind: id }).await.is_ok()
+    let session = handle.session();
+    let admin_releases_on_session_exit =
+        matches!(handle.persist, wormhole_proto::frames::Persistence::Persistent)
+            || session.is_none();
+    admin.state.registry.remove(id, true).map_err(internal)?;
+    admin.state.database.delete_bind_data(id).map_err(internal)?;
+    let released_by_session = if let Some(session) = session {
+        let (acknowledged, acknowledgement) = tokio::sync::oneshot::channel();
+        session.send(SessionCommand::RemoveBind { bind: id, acknowledged }).await.is_ok()
+            && acknowledgement.await.is_ok_and(|released| released)
     } else {
         false
     };
-    admin.state.registry.remove(id, true).map_err(internal)?;
-    admin.state.database.delete_bind_data(id).map_err(internal)?;
-    if !session_notified {
+    if !released_by_session && admin_releases_on_session_exit {
         admin.state.remove_bind(&handle.key_fpr);
     }
     if let PersistedEndpoint::TcpPort(port) = handle.endpoint {

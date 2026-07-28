@@ -8,6 +8,15 @@ fn message_round_trip_and_limits() {
         WsMessage { channel: 1, payload: vec![0; super::MAX_PAYLOAD + 1] }.encode(),
         Err(MuxError::PayloadTooLarge)
     ));
+    let control = WsMessage { channel: 0, payload: vec![0; super::MAX_PAYLOAD + 1] };
+    assert_eq!(
+        WsMessage::decode(&control.encode().expect("control envelope")).expect("decode control"),
+        control
+    );
+    assert!(matches!(
+        WsMessage { channel: 0, payload: vec![0; super::MAX_CONTROL_PAYLOAD + 1] }.encode(),
+        Err(MuxError::PayloadTooLarge)
+    ));
 }
 
 #[test]

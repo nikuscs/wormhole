@@ -155,10 +155,10 @@ impl ClientConfig {
         explicit: ConfigLayer,
     ) -> Result<Self, ConfigError> {
         let mut config = Self::default();
-        if let Some(layer) = read_optional_layer(global)? {
+        if let Some(layer) = read_optional_layer(global, false)? {
             merge(&mut config, layer);
         }
-        if let Some(layer) = read_optional_layer(project)? {
+        if let Some(layer) = read_optional_layer(project, true)? {
             merge(&mut config, layer);
         }
         warn_unknowns("explicit", &explicit);
@@ -218,7 +218,10 @@ pub fn global_config_path() -> Result<Utf8PathBuf, ConfigError> {
     )
 }
 
-fn read_optional_layer(path: Option<&Utf8Path>) -> Result<Option<ConfigLayer>, ConfigError> {
+fn read_optional_layer(
+    path: Option<&Utf8Path>,
+    project: bool,
+) -> Result<Option<ConfigLayer>, ConfigError> {
     let Some(path) = path else {
         return Ok(None);
     };
@@ -227,8 +230,12 @@ fn read_optional_layer(path: Option<&Utf8Path>) -> Result<Option<ConfigLayer>, C
     }
     let contents = fs::read_to_string(path)
         .map_err(|source| ConfigError::Io { path: path.to_owned(), source })?;
-    let layer = toml::from_str::<ConfigLayer>(&contents)
+    let mut layer = toml::from_str::<ConfigLayer>(&contents)
         .map_err(|source| ConfigError::Toml { path: path.to_owned(), source })?;
+    if project {
+        layer.extra.remove("name");
+        layer.extra.remove("service");
+    }
     warn_unknowns(path.as_str(), &layer);
     Ok(Some(layer))
 }

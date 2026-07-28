@@ -5,6 +5,7 @@ use std::{
     sync::Arc,
 };
 
+use bytes::Bytes;
 use tempfile::tempdir;
 use utoipa::OpenApi;
 
@@ -37,6 +38,16 @@ fn openapi_never_exposes_secret_verifier_fields() {
     }
     assert!(json.contains("/v1/status"));
     assert!(json.contains("/v1/binds/{id}"));
+}
+
+#[test]
+fn admin_client_rejects_unsuccessful_mutations() {
+    let response = crate::admin_client::AdminResponse {
+        status: http::StatusCode::NOT_FOUND,
+        body: Bytes::from_static(b"missing"),
+    };
+    let error = response.require_success().expect_err("404 must fail");
+    assert!(error.to_string().contains("404 Not Found"));
 }
 
 #[test]

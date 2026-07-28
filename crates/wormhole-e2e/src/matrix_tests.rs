@@ -12,7 +12,7 @@ use std::{
 
 use super::{
     harness::{EchoServer, TcpEchoServer, TestClient, TestRelay},
-    helpers::{relay_command, set_remote_port, set_transport, spawn_client},
+    helpers::{attempt_deadline, relay_command, set_remote_port, set_transport, spawn_client},
     semantics_server::SemanticsServer,
 };
 
@@ -389,8 +389,9 @@ fn tcp_forward_round_trips_bytes() {
     let relay = TestRelay::start(&client.public_key()).expect("relay");
     client.configure(&relay).expect("client config");
     let echo = TcpEchoServer::start().expect("TCP echo");
-    client.expose_tcp(echo.port(), 24_050).expect("expose TCP");
-    let mut stream = TcpStream::connect(("127.0.0.1", 24_050)).expect("public TCP");
+    let endpoints = client.expose_tcp(echo.port()).expect("expose TCP");
+    let public_port = endpoint_port(&endpoints[0]);
+    let mut stream = TcpStream::connect(("127.0.0.1", public_port)).expect("public TCP");
     stream.write_all(b"round-trip").expect("write");
     stream.shutdown(Shutdown::Write).expect("half-close");
     let mut response = Vec::new();
@@ -418,6 +419,13 @@ fn persistent_http_bind_restores_after_daemon_sigkill() {
     assert!(restored.iter().any(|endpoint| endpoint.urls.contains(&original_url)));
 }
 
+fn endpoint_port(endpoint: &wormhole_core::ActiveEndpoint) -> u16 {
+    let url = endpoint.urls.first().expect("TCP endpoint URL");
+    url.rsplit_once(':')
+        .and_then(|(_, port)| port.parse().ok())
+        .unwrap_or_else(|| panic!("TCP endpoint URL has no port: {url}"))
+}
+
 fn fixture() -> (TestClient, TestRelay, EchoServer) {
     let client = TestClient::isolated().expect("client");
     let relay = TestRelay::start(&client.public_key()).expect("relay");
@@ -441,7 +449,10 @@ fn wait_for_status(relay: &TestRelay, host: &str, url: &str, expected: u16, time
     let deadline = Instant::now() + timeout;
     let mut last = 0;
     while Instant::now() < deadline {
-        last = request_status(relay, host, url);
+        last = relay
+            .request_until(host, url, attempt_deadline(deadline))
+            .ok()
+            .map_or(0, status_from_output);
         if last == expected {
             return;
         }

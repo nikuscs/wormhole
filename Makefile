@@ -1,26 +1,32 @@
-.PHONY: fmt lint check test build coverage e2e size
+.PHONY: fmt lint check test build coverage e2e size policy ci
 
 fmt:
 	cargo fmt --all -- --check
 
 lint:
-	cargo clippy --all-targets -- -D warnings
+	cargo clippy --workspace --all-targets --locked -- -D warnings
 
 check:
-	cargo check --workspace
+	cargo check --workspace --all-targets --locked
 
 test:
-	cargo test --workspace
+	cargo test --workspace --locked
 
 build:
-	cargo build --workspace
+	cargo build --workspace --locked
 
 coverage:
-	cargo llvm-cov --workspace --html
+	cargo llvm-cov --workspace --html --locked
 
 e2e:
-	cargo build -p wormhole-cli -p wormholed
-	cargo test -p wormhole-e2e -- --ignored --test-threads=4
+	cargo build -p wormhole-cli -p wormholed --locked
+	cargo test -p wormhole-e2e --locked -- --ignored --test-threads=4
+
+policy:
+	cargo deny check
+	cargo audit
+
+ci: fmt lint size build test policy
 
 size:
 	@fail=0; \

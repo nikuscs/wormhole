@@ -21,7 +21,7 @@ pub async fn discover_quick_url(
     let mut log_url = None;
     loop {
         if metric_url.is_none()
-            && let Ok(body) = http_get(metrics_port, "/quicktunnel").await
+            && let Ok(body) = http_get_until(metrics_port, "/quicktunnel", deadline).await
         {
             metric_url = find_url(&body);
         }
@@ -40,7 +40,10 @@ pub async fn discover_quick_url(
                 DriverError::Transport("cloudflared did not report a quick tunnel URL".to_owned())
             });
         }
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        tokio::time::sleep_until(
+            (tokio::time::Instant::now() + Duration::from_millis(100)).min(deadline),
+        )
+        .await;
     }
 }
 
@@ -58,27 +61,31 @@ async fn drain_logs(
 }
 
 pub async fn ready(port: u16) -> bool {
-    http_get(port, "/ready").await.is_ok_and(|body| {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
+    http_get_until(port, "/ready", deadline).await.is_ok_and(|body| {
         let lowercase = body.to_ascii_lowercase();
         lowercase.contains("ready") || lowercase.contains("ok")
     })
 }
 
-async fn http_get(port: u16, path: &str) -> Result<String, DriverError> {
-    let mut stream = TcpStream::connect(("127.0.0.1", port))
+async fn http_get_until(
+    port: u16,
+    path: &str,
+    deadline: tokio::time::Instant,
+) -> Result<String, DriverError> {
+    let mut stream = tokio::time::timeout_at(deadline, TcpStream::connect(("127.0.0.1", port)))
         .await
+        .map_err(|_| metrics_timeout())?
         .map_err(|error| DriverError::Transport(error.to_string()))?;
-    stream
-        .write_all(
-            format!("GET {path} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
-                .as_bytes(),
-        )
+    let request = format!("GET {path} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
+    tokio::time::timeout_at(deadline, stream.write_all(request.as_bytes()))
         .await
+        .map_err(|_| metrics_timeout())?
         .map_err(|error| DriverError::Transport(error.to_string()))?;
     let mut response = Vec::new();
-    stream
-        .read_to_end(&mut response)
+    tokio::time::timeout_at(deadline, stream.read_to_end(&mut response))
         .await
+        .map_err(|_| metrics_timeout())?
         .map_err(|error| DriverError::Transport(error.to_string()))?;
     let response = String::from_utf8_lossy(&response);
     let (headers, body) = response
@@ -88,6 +95,10 @@ async fn http_get(port: u16, path: &str) -> Result<String, DriverError> {
         return Err(DriverError::Transport("cloudflared metrics returned non-200".to_owned()));
     }
     Ok(body.to_owned())
+}
+
+fn metrics_timeout() -> DriverError {
+    DriverError::Transport("cloudflared metrics discovery deadline exceeded".to_owned())
 }
 
 fn find_url(input: &str) -> Option<String> {
@@ -111,3 +122,7 @@ fn clean_url(value: &str) -> Option<String> {
     (cleaned.starts_with("https://") && cleaned.contains("trycloudflare.com"))
         .then(|| cleaned.to_owned())
 }
+
+#[cfg(test)]
+#[path = "cloudflare_metrics_tests.rs"]
+mod tests;

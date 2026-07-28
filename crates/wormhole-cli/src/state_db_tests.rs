@@ -2,7 +2,7 @@ use tempfile::tempdir;
 use wormhole_core::{EndpointSpec, Service, Target, model::ServiceProto};
 use wormhole_proto::frames::Persistence;
 
-use super::{DesiredService, StateDb};
+use super::{DesiredKey, DesiredService, StateDb};
 
 #[test]
 fn desired_services_round_trip() {
@@ -45,5 +45,17 @@ fn desired_services_round_trip() {
     let restored = database.list().expect("list");
     assert_eq!(restored.len(), 1);
     assert_eq!(restored[0].service.name, "web");
-    assert!(database.delete("project:web").expect("delete"));
+    let key = DesiredKey::new("project".to_owned(), "web".to_owned()).expect("key");
+    assert!(database.delete(&key).expect("delete"));
+}
+
+#[test]
+fn desired_keys_are_collision_free_and_validate_addressable_names() {
+    let first = DesiredKey::new("a".to_owned(), "b:c".to_owned()).expect("first");
+    let second = DesiredKey::new("a".to_owned(), "b".to_owned()).expect("second");
+
+    assert_ne!(first, second);
+    assert!(DesiredKey::new(String::new(), String::new()).is_err());
+    assert!(DesiredKey::new("a:b".to_owned(), "c".to_owned()).is_err());
+    assert!(DesiredKey::new(String::new(), "a/b".to_owned()).is_ok());
 }

@@ -26,6 +26,7 @@ const CHALLENGE_CONTEXT: &[u8] = b"wormhole-v1-challenge";
 const PRIVATE_MODE: u16 = 0o600;
 const DIRECTORY_MODE: u16 = 0o700;
 const KEY_BYTES: usize = 32;
+const MAX_IDENTITY_FILE_BYTES: usize = 1024;
 const DIRECTORY_FLAGS: OFlag = OFlag::O_RDONLY.union(OFlag::O_DIRECTORY).union(OFlag::O_NOFOLLOW);
 
 /// An Ed25519 client identity whose secret seed is zeroized on drop by `SigningKey`.
@@ -42,13 +43,20 @@ impl Identity {
     /// Loads a private identity without following any symbolic-link path component.
     pub fn load(path: &Utf8Path) -> Result<Self, ProtoError> {
         let (parent, file_name) = open_parent_directory(path, false)?;
-        let descriptor =
-            openat(&parent, file_name.as_str(), OFlag::O_RDONLY | OFlag::O_NOFOLLOW, Mode::empty())
-                .map_err(|error| map_path_error(path, error))?;
+        let descriptor = openat(
+            &parent,
+            file_name.as_str(),
+            OFlag::O_RDONLY | OFlag::O_NOFOLLOW | OFlag::O_NONBLOCK,
+            Mode::empty(),
+        )
+        .map_err(|error| map_path_error(path, error))?;
         let mut file = File::from(descriptor);
-        validate_private_mode(path, &file.metadata()?)?;
+        validate_identity_file(path, &file.metadata()?)?;
         let mut encoded = String::new();
-        file.read_to_string(&mut encoded)?;
+        (&mut file).take((MAX_IDENTITY_FILE_BYTES + 1) as u64).read_to_string(&mut encoded)?;
+        if encoded.len() > MAX_IDENTITY_FILE_BYTES {
+            return Err(identity_file_error("identity file is too large"));
+        }
         parse_private(&encoded)
     }
 
@@ -308,12 +316,22 @@ fn map_path_error(path: &Utf8Path, error: Errno) -> ProtoError {
     }
 }
 
-fn validate_private_mode(path: &Utf8Path, metadata: &fs::Metadata) -> Result<(), ProtoError> {
+fn validate_identity_file(path: &Utf8Path, metadata: &fs::Metadata) -> Result<(), ProtoError> {
+    if !metadata.is_file() {
+        return Err(identity_file_error("identity path is not a regular file"));
+    }
+    if metadata.len() > MAX_IDENTITY_FILE_BYTES as u64 {
+        return Err(identity_file_error("identity file is too large"));
+    }
     let mode = metadata.mode() & 0o777;
     if mode != u32::from(PRIVATE_MODE) {
         return Err(ProtoError::KeyPermissions { path: path.to_string(), mode });
     }
     Ok(())
+}
+
+fn identity_file_error(message: &str) -> ProtoError {
+    ProtoError::InvalidIdentity(message.to_owned())
 }
 
 fn temporary_name(file_name: &str) -> String {

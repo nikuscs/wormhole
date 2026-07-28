@@ -135,11 +135,11 @@ impl<'a> ClientHandshake<'a> {
     }
 
     fn protocol_error(&mut self, incoming: &ControlFrame) -> Result<HandshakeStep, ProtoError> {
+        let state = self.state;
         self.state = ClientState::Failed;
         Err(ProtoError::Protocol(format!(
-            "unexpected {} while client is {:?}",
-            frame_name(incoming),
-            self.state
+            "unexpected {} while client is {state:?}",
+            frame_name(incoming)
         )))
     }
 }

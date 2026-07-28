@@ -4,7 +4,7 @@ use uuid::Uuid;
 use super::{MuxEndpoint, MuxRole, reset_network_frame};
 use crate::{
     codec::{ControlChannel, read_stream_header},
-    frames::{ControlFrame, EventKind, HttpRequestHead, StreamHeader},
+    frames::{ControlFrame, EventKind, HeaderField, HttpRequestHead, StreamHeader},
     mux::{Direction, MuxControl, WsMessage},
 };
 
@@ -226,13 +226,13 @@ async fn channel_count_is_bounded_without_closing_control() {
     let header =
         StreamHeader::Tcp { bind: Uuid::now_v7(), peer: "127.0.0.1:1234".parse().expect("peer") };
     let mut held = Vec::new();
-    for _ in 0..32 {
+    for _ in 0..super::MAX_STREAMS {
         held.push(server.opener.open(header.clone()).await.expect("within channel limit"));
         let mut incoming = client.incoming.recv().await.expect("incoming");
         let _header = read_stream_header(&mut incoming).await.expect("header");
         held.push(incoming);
     }
-    assert_eq!(held.len(), 64);
+    assert_eq!(held.len(), 2 * super::MAX_STREAMS as usize);
     assert!(server.opener.open(header).await.is_err());
 }
 
@@ -267,6 +267,46 @@ async fn maximum_fragmented_control_frame_survives_mux() {
         .expect("large control must not stall")
         .expect("large control receive");
     assert_eq!(decoded, frame);
+}
+
+#[tokio::test]
+async fn maximum_stream_header_survives_larger_control_envelope() {
+    let (server, server_in, mut server_out) = MuxEndpoint::spawn(MuxRole::Server);
+    let (mut client, client_in, mut client_out) = MuxEndpoint::spawn(MuxRole::Client);
+    tokio::spawn(async move {
+        while let Some(message) = server_out.recv().await {
+            if client_in.send(message).await.is_err() {
+                break;
+            }
+        }
+    });
+    tokio::spawn(async move {
+        while let Some(message) = client_out.recv().await {
+            if server_in.send(message).await.is_err() {
+                break;
+            }
+        }
+    });
+    let mut header = StreamHeader::Http {
+        bind: Uuid::now_v7(),
+        peer: "127.0.0.1:1234".parse().expect("peer"),
+        request: HttpRequestHead {
+            method: "GET".to_owned(),
+            uri: "/".to_owned(),
+            version: "HTTP/1.1".to_owned(),
+            headers: vec![HeaderField { name: "x-large".to_owned(), value_b64: String::new() }],
+        },
+        buffered: None,
+    };
+    let base = serde_json::to_vec(&header).expect("base header").len();
+    let target = crate::mux::MAX_PAYLOAD;
+    let StreamHeader::Http { request, .. } = &mut header else { unreachable!() };
+    request.headers[0].value_b64 = "x".repeat(target - base);
+    assert_eq!(serde_json::to_vec(&header).expect("maximum header").len(), target);
+
+    let _sender = server.opener.open(header.clone()).await.expect("maximum header open");
+    let mut receiver = client.incoming.recv().await.expect("incoming maximum header");
+    assert_eq!(read_stream_header(&mut receiver).await.expect("maximum header read"), header);
 }
 
 #[tokio::test]

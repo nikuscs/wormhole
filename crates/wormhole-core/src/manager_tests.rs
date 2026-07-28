@@ -10,7 +10,9 @@ use crate::{
     config::ClientConfig,
     driver::{DriverCapabilities, DriverEvent, DriverHealth, DriverRegistry, TunnelDriver},
     error::DriverError,
-    model::{EndpointSpec, EndpointStatus, ResolvedTarget, Service, ServiceProto, Target},
+    model::{
+        EndpointSpec, EndpointStatus, ResolvedTarget, RetryPolicy, Service, ServiceProto, Target,
+    },
 };
 
 struct MockDriver;
@@ -70,6 +72,31 @@ fn spec(host: &str) -> EndpointSpec {
         capture_body_max: 1024 * 1024,
         reservation: None,
     }
+}
+
+#[test]
+fn defaults_apply_http_options_without_poisoning_tcp() {
+    let registry = Arc::new(DriverRegistry::new());
+    let mut config = ClientConfig::default();
+    config.defaults.inspect = true;
+    config.defaults.retry = Some(RetryPolicy {
+        max_attempts: 3,
+        initial_delay_ms: 10,
+        max_delay_ms: 20,
+        retry_connect: true,
+        retry_5xx: true,
+        max_body_bytes: 1024,
+        total_deadline_ms: 500,
+    });
+    let manager = TunnelManager::new(registry, config.clone());
+
+    let http = manager.default_specs(ServiceProto::Http);
+    assert!(http[0].inspect);
+    assert_eq!(http[0].retry, config.defaults.retry);
+
+    let tcp = manager.default_specs(ServiceProto::Tcp);
+    assert!(!tcp[0].inspect);
+    assert!(tcp[0].retry.is_none());
 }
 
 fn manager() -> TunnelManager {
@@ -136,12 +163,12 @@ async fn administrative_lifecycle_updates_and_removes_endpoints() {
     manager.discard(ids[0]).await;
     assert!(!manager.list().iter().any(|entry| entry.id == ids[0]));
     manager.close_service("admin").await;
-    assert!(manager.list().iter().all(|entry| entry.status == EndpointStatus::Offline));
+    assert!(manager.list().is_empty());
 
     manager.expose(service, vec![spec("third")]).await.expect("expose again");
     wait_for_status(&manager, EndpointStatus::Online, 1).await;
     manager.close_service_with_forget("admin", true).await;
-    assert!(manager.list().iter().all(|entry| entry.status == EndpointStatus::Offline));
+    assert!(manager.list().is_empty());
     manager.shutdown_with_forget().await.expect("shutdown");
 }
 

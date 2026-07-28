@@ -5,6 +5,8 @@ use std::{path::PathBuf, process::Stdio, sync::Arc};
 use crate::{
     driver::{DriverCapabilities, DriverEvent, DriverHealth, TunnelDriver},
     drivers::{
+        process::ManagedProcess,
+        tailscale_args::{install_args, public_port, public_url},
         tailscale_process::{
             cleanup_failed_install, install_endpoint, monitor_install, preview_install,
             record_installed_ownership,
@@ -115,11 +117,7 @@ impl TailscaleDriver {
         spec: &EndpointSpec,
         target: ResolvedTarget,
     ) -> Result<BindingClaim<'a>, DriverError> {
-        let port = if spec.proto == ServiceProto::Tcp {
-            spec.public_port.unwrap_or_else(|| target.0.port())
-        } else {
-            443
-        };
+        let port = public_port(spec, target);
         let key = port.to_string();
         self.active.claim(self.ownership_dir.as_deref(), key)
     }
@@ -158,12 +156,8 @@ impl TailscaleDriver {
         let background = spec.persist == wormhole_proto::frames::Persistence::Persistent
             || self.binary.is_none();
         let command = install_args(&mode, spec, target, background);
-        let public_port = spec.public_port.unwrap_or_else(|| target.0.port());
-        let url = if spec.proto == ServiceProto::Tcp {
-            format!("tcp://{dns}:{public_port}")
-        } else {
-            format!("https://{dns}")
-        };
+        let public_port = public_port(spec, target);
+        let url = public_url(spec.proto, &dns, public_port);
         Ok(TailscaleSetup { mode, background, command, url })
     }
 
@@ -270,9 +264,12 @@ impl TunnelDriver for TailscaleDriver {
                 "tailscale does not support custom domains".to_owned(),
             ));
         }
-        if spec.proto == ServiceProto::Http && spec.public_port.is_some() {
+        if spec.proto == ServiceProto::Http
+            && spec.qualifier.as_deref() != Some("funnel")
+            && spec.public_port.is_some()
+        {
             return Err(DriverError::Capability(
-                "tailscale HTTP endpoints do not accept public_port".to_owned(),
+                "tailscale Serve HTTP endpoints do not accept public_port".to_owned(),
             ));
         }
         if spec.qualifier.as_deref() == Some("funnel")
@@ -336,51 +333,16 @@ impl TunnelDriver for TailscaleDriver {
                 .await
             {
                 Ok(process) => {
-                    let target_text = command.last().cloned().unwrap_or_default();
-                    match verify_install(&self.api, &target_text).await {
-                        Ok(installed_state) => {
-                            self.record_ownership(&mode, &spec, target).await?;
-                            events
-                                .send(DriverEvent::Ready {
-                                    urls: vec![url.clone()],
-                                    bind_id: None,
-                                    reservation: None,
-                                })
-                                .await
-                                .map_err(|_| DriverError::Cancelled)?;
-                            backoff = INITIAL_BACKOFF;
-                            if monitor_install(
-                                &self.api,
-                                process.as_ref(),
-                                &spec,
-                                target,
-                                &installed_state,
-                                &stop,
-                            )
-                            .await?
-                            {
-                                if let Some(process) = process {
-                                    process.terminate().await?;
-                                }
-                                let preserve_entry = spec.persist
-                                    == wormhole_proto::frames::Persistence::Persistent
-                                    && *preserve.borrow();
-                                if !preserve_entry {
-                                    self.cleanup_binding(&mode, &spec, target, &installed_state)
-                                        .await?;
-                                }
-                                let _closed = events.send(DriverEvent::Closed).await;
-                                return Ok(());
-                            }
-                        }
-                        Err(error) => {
-                            if let Some(process) = process {
-                                process.terminate().await?;
-                            }
-                            cleanup_failed_install(
-                                &self.api, &mode, &spec, target, &error, &events,
-                            )
-                            .await?;
+                    let outcome = self
+                        .handle_installed(
+                            process, &mode, &spec, target, &url, &command, &events, &stop,
+                            &preserve,
+                        )
+                        .await?;
+                    if let Some(stopped) = outcome {
+                        backoff = INITIAL_BACKOFF;
+                        if stopped {
+                            return Ok(());
                         }
                     }
                 }
@@ -403,23 +365,54 @@ impl TunnelDriver for TailscaleDriver {
     }
 }
 
-fn install_args(
-    mode: &str,
-    spec: &EndpointSpec,
-    target: ResolvedTarget,
-    background: bool,
-) -> Vec<String> {
-    let mut args = vec![mode.to_owned()];
-    if background {
-        args.push("--bg".to_owned());
+impl TailscaleDriver {
+    #[allow(clippy::too_many_arguments)]
+    async fn handle_installed(
+        &self,
+        process: Option<ManagedProcess>,
+        mode: &str,
+        spec: &EndpointSpec,
+        target: ResolvedTarget,
+        url: &str,
+        command: &[String],
+        events: &mpsc::Sender<DriverEvent>,
+        stop: &CancellationToken,
+        preserve: &tokio::sync::watch::Receiver<bool>,
+    ) -> Result<Option<bool>, DriverError> {
+        let target_text = command.last().cloned().unwrap_or_default();
+        let installed = match verify_install(&self.api, &target_text).await {
+            Ok(installed) => installed,
+            Err(error) => {
+                if let Some(process) = process {
+                    process.terminate().await?;
+                }
+                cleanup_failed_install(&self.api, mode, spec, target, &error, events).await?;
+                return Ok(None);
+            }
+        };
+        self.record_ownership(mode, spec, target).await?;
+        events
+            .send(DriverEvent::Ready {
+                urls: vec![url.to_owned()],
+                bind_id: None,
+                reservation: None,
+            })
+            .await
+            .map_err(|_| DriverError::Cancelled)?;
+        if !monitor_install(&self.api, process.as_ref(), spec, target, &installed, stop).await? {
+            return Ok(Some(false));
+        }
+        if let Some(process) = process {
+            process.terminate().await?;
+        }
+        let preserve_entry =
+            spec.persist == wormhole_proto::frames::Persistence::Persistent && *preserve.borrow();
+        if !preserve_entry {
+            self.cleanup_binding(mode, spec, target, &installed).await?;
+        }
+        let _closed = events.send(DriverEvent::Closed).await;
+        Ok(Some(true))
     }
-    if spec.proto == ServiceProto::Tcp {
-        args.push(format!("--tcp={}", spec.public_port.unwrap_or_else(|| target.0.port())));
-        args.push(format!("tcp://{}", target.0));
-    } else {
-        args.push(format!("http://{}", target.0));
-    }
-    args
 }
 
 async fn snapshot_config(api: &Arc<dyn TailscaleApi>) -> Result<(), DriverError> {

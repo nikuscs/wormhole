@@ -44,6 +44,7 @@ pub struct AppState {
     pub started_at: Timestamp,
     counters: DashMap<String, Arc<KeyCounters>>,
     active_streams: AtomicU64,
+    buffered_body_bytes: AtomicU64,
     buffered_inflight: DashMap<Uuid, u64>,
     listener_addresses: OnceLock<ListenerAddresses>,
     shutdown_tx: watch::Sender<bool>,
@@ -68,6 +69,7 @@ impl AppState {
             started_at: Timestamp::now(),
             counters: DashMap::new(),
             active_streams: AtomicU64::new(0),
+            buffered_body_bytes: AtomicU64::new(0),
             buffered_inflight: DashMap::new(),
             listener_addresses: OnceLock::new(),
             shutdown_tx,
@@ -104,6 +106,11 @@ impl AppState {
     /// Releases one bind slot.
     pub fn remove_bind(&self, fingerprint: &str) {
         decrement(&self.counters(fingerprint).binds);
+    }
+
+    /// Reserves process memory while an offline request body is collected.
+    pub(crate) const fn reserve_buffer_memory(&self) -> BufferMemoryReservation<'_> {
+        BufferMemoryReservation { counter: &self.buffered_body_bytes, reserved: 0 }
     }
 
     /// Claims one buffered row for delivery on its owning session.
@@ -169,6 +176,46 @@ impl AppState {
             .entry(fingerprint.to_owned())
             .or_insert_with(|| Arc::new(KeyCounters::default()))
             .clone()
+    }
+}
+
+pub(crate) struct BufferMemoryReservation<'a> {
+    counter: &'a AtomicU64,
+    reserved: u64,
+}
+
+impl BufferMemoryReservation<'_> {
+    pub(crate) fn reserve(&mut self, additional: usize, limit: u64) -> bool {
+        let Ok(additional) = u64::try_from(additional) else {
+            return false;
+        };
+        let mut current = self.counter.load(Ordering::Acquire);
+        loop {
+            let Some(next) = current.checked_add(additional) else {
+                return false;
+            };
+            if next > limit {
+                return false;
+            }
+            match self.counter.compare_exchange_weak(
+                current,
+                next,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            ) {
+                Ok(_) => {
+                    self.reserved += additional;
+                    return true;
+                }
+                Err(actual) => current = actual,
+            }
+        }
+    }
+}
+
+impl Drop for BufferMemoryReservation<'_> {
+    fn drop(&mut self) {
+        self.counter.fetch_sub(self.reserved, Ordering::AcqRel);
     }
 }
 

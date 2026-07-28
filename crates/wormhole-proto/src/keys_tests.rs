@@ -6,6 +6,7 @@ use std::{
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use camino::Utf8Path;
 use ed25519_dalek::SigningKey;
+use nix::{sys::stat::Mode, unistd::mkfifo};
 use tempfile::tempdir;
 
 use super::{Identity, PublicKeyRef, open_parent_directory, verify_challenge};
@@ -114,6 +115,43 @@ fn load_rejects_world_readable_identity() {
 
     assert!(matches!(error, ProtoError::KeyPermissions { mode: 0o644, .. }));
     assert!(error.to_string().contains("0600"));
+}
+
+#[test]
+fn load_rejects_oversized_identity_before_reading_contents() {
+    let directory = tempdir().expect("temporary directory");
+    let key_path = directory.path().join("oversized.key");
+    fs::write(&key_path, vec![b'x'; super::MAX_IDENTITY_FILE_BYTES + 1]).expect("oversized key");
+    fs::set_permissions(&key_path, fs::Permissions::from_mode(0o600)).expect("mode");
+    let key_path = Utf8Path::from_path(&key_path).expect("UTF-8 path");
+
+    let Err(error) = Identity::load(key_path) else {
+        panic!("oversized identity must fail");
+    };
+
+    assert!(matches!(error, ProtoError::InvalidIdentity(message) if message.contains("too large")));
+}
+
+#[test]
+fn load_nonblockingly_rejects_fifo_and_device_descriptors() {
+    let directory = tempdir().expect("temporary directory");
+    let fifo = directory.path().join("identity.fifo");
+    mkfifo(&fifo, Mode::from_bits_truncate(0o600)).expect("FIFO fixture");
+    let fifo = Utf8Path::from_path(&fifo).expect("UTF-8 FIFO path");
+
+    let Err(fifo_error) = Identity::load(fifo) else {
+        panic!("FIFO must fail without blocking");
+    };
+    let Err(device_error) = Identity::load(Utf8Path::new("/dev/null")) else {
+        panic!("device must fail");
+    };
+
+    assert!(
+        matches!(fifo_error, ProtoError::InvalidIdentity(message) if message.contains("regular"))
+    );
+    assert!(
+        matches!(device_error, ProtoError::InvalidIdentity(message) if message.contains("regular"))
+    );
 }
 
 #[test]

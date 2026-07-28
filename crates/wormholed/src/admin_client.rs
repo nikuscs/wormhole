@@ -10,9 +10,22 @@ use hyper_util::rt::TokioIo;
 use serde::Serialize;
 use tokio::net::UnixStream;
 
+#[derive(Debug)]
 pub struct AdminResponse {
     pub status: StatusCode,
     pub body: Bytes,
+}
+
+impl AdminResponse {
+    pub fn require_success(self) -> Result<Self, AdminClientError> {
+        if self.status.is_success() {
+            return Ok(self);
+        }
+        Err(AdminClientError::Response {
+            status: self.status,
+            body: String::from_utf8_lossy(&self.body).into_owned(),
+        })
+    }
 }
 
 pub async fn request<T: Serialize + ?Sized>(
@@ -60,4 +73,6 @@ pub enum AdminClientError {
     Build(#[from] http::Error),
     #[error(transparent)]
     Json(#[from] serde_json::Error),
+    #[error("administration request failed with {status}: {body}")]
+    Response { status: StatusCode, body: String },
 }

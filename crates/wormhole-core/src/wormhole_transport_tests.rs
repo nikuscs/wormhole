@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 
 use camino::Utf8PathBuf;
 use futures::{SinkExt as _, StreamExt as _};
@@ -13,13 +13,23 @@ use wormhole_proto::{
 };
 
 use super::{
-    authenticate_io, client_endpoint, connect_remote, connect_remote_ws, probe_remote, root_store,
-    websocket_tls,
+    QUIC_IDLE_TIMEOUT, QUIC_KEEP_ALIVE, authenticate_io, client_endpoint, connect_remote_addresses,
+    connect_remote_ws_addresses, root_store, websocket_tls,
 };
-use crate::{error::DriverError, remotes::Remote};
+use crate::{
+    error::DriverError,
+    remotes::{Remote, Transport},
+    wormhole_connect::probe_remote,
+};
 
 fn remote() -> Remote {
     Remote::new("127.0.0.1:443".to_owned(), "relay.example.com".to_owned(), None)
+}
+
+#[test]
+fn quic_client_detects_dead_relays_promptly() {
+    assert_eq!(QUIC_KEEP_ALIVE, Duration::from_secs(3));
+    assert_eq!(QUIC_IDLE_TIMEOUT, Duration::from_secs(10));
 }
 
 #[tokio::test]
@@ -54,6 +64,7 @@ async fn quic_connect_and_probe_use_configured_ca_and_handshake() {
     let _provider = rustls::crypto::aws_lc_rs::default_provider().install_default();
     let identity = Identity::generate();
     let expected_key = identity.public_base64();
+    let probe_key = expected_key.clone();
     let certificate =
         rcgen::generate_simple_self_signed(vec!["localhost".to_owned()]).expect("certificate");
     let chain = vec![certificate.cert.der().clone()];
@@ -78,19 +89,23 @@ async fn quic_connect_and_probe_use_configured_ca_and_handshake() {
         let (send, recv) = connection.accept_bi().await.expect("control");
         serve_handshake(tokio::io::join(recv, send), expected_key).await;
         let incoming = task_endpoint.accept().await.expect("probe incoming");
-        let _probe = incoming.await.expect("probe");
+        let connection = incoming.await.expect("probe");
+        let (send, recv) = connection.accept_bi().await.expect("probe control");
+        serve_handshake(tokio::io::join(recv, send), probe_key).await;
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
     });
     let directory = tempfile::tempdir().expect("tempdir");
     let ca = directory.path().join("ca.pem");
     std::fs::write(&ca, certificate.cert.pem()).expect("CA");
     let mut remote = Remote::new(address.to_string(), "localhost".to_owned(), None);
     remote.trusted_ca = Some(Utf8PathBuf::from_path_buf(ca).expect("utf8"));
+    let addresses = vec!["127.0.0.1:0".parse().expect("unreachable"), address];
     let (client_endpoint, connection, _channel, limits) =
-        connect_remote(&remote, &identity).await.expect("connect");
+        connect_remote_addresses(&remote, &identity, addresses).await.expect("connect");
     assert_eq!(limits.max_streams, 23);
     connection.close(0_u32.into(), b"done");
     client_endpoint.wait_idle().await;
-    probe_remote(&remote).await.expect("probe");
+    probe_remote(&remote, &identity).await.expect("probe");
     server.await.expect("server");
 }
 
@@ -112,36 +127,38 @@ async fn websocket_connect_bridges_mux_control_channel() {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("listener");
     let address = listener.local_addr().expect("address");
     let server = tokio::spawn(async move {
-        let (tcp, _) = listener.accept().await.expect("accept");
-        let tls = acceptor.accept(tcp).await.expect("TLS accept");
-        let socket = tokio_tungstenite::accept_async(tls).await.expect("websocket");
-        let (endpoint, network, mut outbound) = wormhole_proto::mux_runtime::MuxEndpoint::spawn(
-            wormhole_proto::mux_runtime::MuxRole::Server,
-        );
-        let bridge = tokio::spawn(async move {
-            let (mut sink, mut source) = socket.split();
-            loop {
-                tokio::select! {
-                    incoming = source.next() => match incoming {
-                        Some(Ok(tokio_tungstenite::tungstenite::Message::Binary(data))) => {
-                            if network.send(data.to_vec()).await.is_err() { return; }
+        for _attempt in 0..2 {
+            let (tcp, _) = listener.accept().await.expect("accept");
+            let tls = acceptor.accept(tcp).await.expect("TLS accept");
+            let socket = tokio_tungstenite::accept_async(tls).await.expect("websocket");
+            let (endpoint, network, mut outbound) = wormhole_proto::mux_runtime::MuxEndpoint::spawn(
+                wormhole_proto::mux_runtime::MuxRole::Server,
+            );
+            let bridge = tokio::spawn(async move {
+                let (mut sink, mut source) = socket.split();
+                loop {
+                    tokio::select! {
+                        incoming = source.next() => match incoming {
+                            Some(Ok(tokio_tungstenite::tungstenite::Message::Binary(data))) => {
+                                if network.send(data.to_vec()).await.is_err() { return; }
+                            }
+                            _ => return,
+                        },
+                        outgoing = outbound.recv() => {
+                            let Some(outgoing) = outgoing else { return };
+                            if sink.send(tokio_tungstenite::tungstenite::Message::Binary(outgoing.into())).await.is_err() { return; }
                         }
-                        _ => return,
-                    },
-                    outgoing = outbound.recv() => {
-                        let Some(outgoing) = outgoing else { return };
-                        if sink.send(tokio_tungstenite::tungstenite::Message::Binary(outgoing.into())).await.is_err() { return; }
                     }
                 }
-            }
-        });
-        tokio::time::timeout(
-            std::time::Duration::from_secs(3),
-            serve_handshake(endpoint.control, expected_key),
-        )
-        .await
-        .expect("server handshake timeout");
-        bridge.await.expect("bridge");
+            });
+            tokio::time::timeout(
+                std::time::Duration::from_secs(3),
+                serve_handshake(endpoint.control, expected_key.clone()),
+            )
+            .await
+            .expect("server handshake timeout");
+            bridge.await.expect("bridge");
+        }
     });
     let directory = tempfile::tempdir().expect("tempdir");
     let ca = directory.path().join("ca.pem");
@@ -149,7 +166,8 @@ async fn websocket_connect_bridges_mux_control_channel() {
     let mut remote = Remote::new(address.to_string(), "localhost".to_owned(), None);
     remote.https_addr = Some(address.to_string());
     remote.trusted_ca = Some(Utf8PathBuf::from_path_buf(ca).expect("utf8"));
-    let result = connect_remote_ws(&remote, &identity).await;
+    let addresses = vec!["127.0.0.1:9".parse().expect("unreachable"), address];
+    let result = connect_remote_ws_addresses(&remote, &identity, addresses).await;
     let (channel, limits, incoming) = match result {
         Ok(connected) => connected,
         Err(error) => {
@@ -160,6 +178,11 @@ async fn websocket_connect_bridges_mux_control_channel() {
     assert_eq!(limits.max_binds, 7);
     drop(channel);
     drop(incoming);
+    remote.transport = Transport::Auto;
+    assert_eq!(
+        probe_remote(&remote, &identity).await.expect("automatic WebSocket fallback probe"),
+        Transport::Ws
+    );
     server.await.expect("server");
 }
 

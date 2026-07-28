@@ -40,7 +40,7 @@ pub struct RemoteConn {
 impl RemoteConn {
     pub async fn connect(remote: &Remote, identity: Identity) -> Result<Arc<Self>, DriverError> {
         let ConnectedTransport { endpoint, connection, channel, limits, mux_streams } =
-            connect_transport(remote, identity).await?;
+            connect_transport(remote, &identity).await?;
         let binds = Arc::new(DashMap::new());
         let (commands, command_rx) = mpsc::channel(128);
         let (closed_tx, closed) = watch::channel(false);

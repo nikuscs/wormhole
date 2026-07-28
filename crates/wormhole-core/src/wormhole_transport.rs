@@ -6,7 +6,7 @@ use std::{
     time::Duration,
 };
 
-use futures::{SinkExt as _, StreamExt as _};
+use futures::{SinkExt as _, StreamExt as _, stream::FuturesUnordered};
 use rustls::{
     ClientConfig as RustlsClientConfig, RootCertStore,
     pki_types::{CertificateDer, pem::PemObject},
@@ -22,7 +22,7 @@ use wormhole_proto::{
     ALPN, ClientHandshake, HandshakeStep, Identity,
     codec::ControlChannel,
     frames::Limits,
-    mux::MAX_PAYLOAD,
+    mux::{MAX_CONTROL_PAYLOAD, MAX_PAYLOAD, WsMessage},
     mux_runtime::{MuxEndpoint, MuxRole, reset_network_frame},
 };
 
@@ -32,13 +32,78 @@ pub trait ControlIo: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send
 impl<T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send> ControlIo for T {}
 pub type BoxControlIo = Box<dyn ControlIo>;
 
+const QUIC_KEEP_ALIVE: Duration = Duration::from_secs(3);
+const QUIC_IDLE_TIMEOUT: Duration = Duration::from_secs(10);
+
 pub async fn connect_remote(
     remote: &Remote,
     identity: &Identity,
 ) -> Result<(quinn::Endpoint, quinn::Connection, ControlChannel<BoxControlIo>, Limits), DriverError>
 {
-    let address =
-        remote.resolve_addr().await.map_err(|error| DriverError::Transport(error.to_string()))?;
+    let addresses =
+        remote.resolve_addrs().await.map_err(|error| DriverError::Transport(error.to_string()))?;
+    connect_remote_addresses(remote, identity, addresses).await
+}
+
+pub type WsConnect =
+    (ControlChannel<BoxControlIo>, Limits, tokio::sync::mpsc::Receiver<tokio::io::DuplexStream>);
+
+pub async fn connect_remote_ws(
+    remote: &Remote,
+    identity: &Identity,
+) -> Result<WsConnect, DriverError> {
+    let addresses = remote
+        .resolve_https_addrs()
+        .await
+        .map_err(|error| DriverError::Transport(error.to_string()))?;
+    connect_remote_ws_addresses(remote, identity, addresses).await
+}
+
+async fn connect_remote_addresses(
+    remote: &Remote,
+    identity: &Identity,
+    addresses: Vec<SocketAddr>,
+) -> Result<(quinn::Endpoint, quinn::Connection, ControlChannel<BoxControlIo>, Limits), DriverError>
+{
+    let mut attempts = addresses
+        .into_iter()
+        .map(|address| connect_remote_address(remote, identity, address))
+        .collect::<FuturesUnordered<_>>();
+    let mut last_error = None;
+    while let Some(result) = attempts.next().await {
+        match result {
+            Ok(connected) => return Ok(connected),
+            Err(error) => last_error = Some(error),
+        }
+    }
+    Err(last_error.expect("remote resolution returns at least one address"))
+}
+
+async fn connect_remote_ws_addresses(
+    remote: &Remote,
+    identity: &Identity,
+    addresses: Vec<SocketAddr>,
+) -> Result<WsConnect, DriverError> {
+    let mut attempts = addresses
+        .into_iter()
+        .map(|address| connect_remote_ws_address(remote, identity, address))
+        .collect::<FuturesUnordered<_>>();
+    let mut last_error = None;
+    while let Some(result) = attempts.next().await {
+        match result {
+            Ok(connected) => return Ok(connected),
+            Err(error) => last_error = Some(error),
+        }
+    }
+    Err(last_error.expect("remote resolution returns at least one address"))
+}
+
+async fn connect_remote_address(
+    remote: &Remote,
+    identity: &Identity,
+    address: SocketAddr,
+) -> Result<(quinn::Endpoint, quinn::Connection, ControlChannel<BoxControlIo>, Limits), DriverError>
+{
     let endpoint = client_endpoint(address.ip(), remote)?;
     let connection = endpoint
         .connect(address, &remote.server_name)
@@ -49,17 +114,11 @@ pub async fn connect_remote(
     Ok((endpoint, connection, channel, limits))
 }
 
-pub type WsConnect =
-    (ControlChannel<BoxControlIo>, Limits, tokio::sync::mpsc::Receiver<tokio::io::DuplexStream>);
-
-pub async fn connect_remote_ws(
+async fn connect_remote_ws_address(
     remote: &Remote,
     identity: &Identity,
+    address: SocketAddr,
 ) -> Result<WsConnect, DriverError> {
-    let address = remote
-        .resolve_https_addr()
-        .await
-        .map_err(|error| DriverError::Transport(error.to_string()))?;
     let url = format!("wss://{}:{}/_wormhole/ws", remote.server_name, address.port());
     let request =
         url.into_client_request().map_err(|error| DriverError::Transport(error.to_string()))?;
@@ -96,7 +155,7 @@ async fn websocket_bridge(
         tokio::select! {
             incoming = source.next() => match incoming {
                 Some(Ok(Message::Binary(payload))) => {
-                    if payload.len() > MAX_PAYLOAD + 4 {
+                    if WsMessage::decode(&payload).is_err() {
                         let Some(channel) = oversized_data_channel(&payload) else { return };
                         let Ok(reset) = reset_network_frame(channel) else { return };
                         if sink.send(Message::Binary(reset.clone().into())).await.is_err()
@@ -116,7 +175,11 @@ async fn websocket_bridge(
             },
             message = outbound.recv() => {
                 let Some(message) = message else { return };
-                if sink.send(Message::Binary(message.into())).await.is_err() { return; }
+                if WsMessage::decode(&message).is_err()
+                    || sink.send(Message::Binary(message.into())).await.is_err()
+                {
+                    return;
+                }
             }
             _ = keepalive.tick() => {
                 if sink.send(Message::Ping(Vec::new().into())).await.is_err() { return; }
@@ -130,26 +193,13 @@ fn websocket_config() -> WebSocketConfig {
         .read_buffer_size(MAX_PAYLOAD)
         .write_buffer_size(MAX_PAYLOAD)
         .max_write_buffer_size(4 * MAX_PAYLOAD)
-        .max_message_size(Some(2 * MAX_PAYLOAD + 4))
-        .max_frame_size(Some(2 * MAX_PAYLOAD + 4))
+        .max_message_size(Some(MAX_CONTROL_PAYLOAD + 4))
+        .max_frame_size(Some(MAX_CONTROL_PAYLOAD + 4))
 }
 
 fn oversized_data_channel(payload: &[u8]) -> Option<u32> {
     let channel = u32::from_be_bytes(payload.get(..4)?.try_into().ok()?);
     (channel != 0).then_some(channel)
-}
-
-pub async fn probe_remote(remote: &Remote) -> Result<(), DriverError> {
-    let address =
-        remote.resolve_addr().await.map_err(|error| DriverError::Transport(error.to_string()))?;
-    let endpoint = client_endpoint(address.ip(), remote)?;
-    let connection = endpoint
-        .connect(address, &remote.server_name)
-        .map_err(|error| DriverError::Transport(error.to_string()))?
-        .await
-        .map_err(|error| DriverError::Transport(error.to_string()))?;
-    connection.close(0_u32.into(), b"doctor probe");
-    Ok(())
 }
 
 async fn authenticate(
@@ -225,6 +275,12 @@ fn client_endpoint(remote_ip: IpAddr, remote: &Remote) -> Result<quinn::Endpoint
         .map_err(|error| DriverError::Transport(error.to_string()))?;
     let mut client = quinn::ClientConfig::new(Arc::new(crypto));
     let mut transport = quinn::TransportConfig::default();
+    transport.keep_alive_interval(Some(QUIC_KEEP_ALIVE));
+    transport.max_idle_timeout(Some(
+        QUIC_IDLE_TIMEOUT
+            .try_into()
+            .map_err(|error| DriverError::Transport(format!("invalid idle timeout: {error}")))?,
+    ));
     transport.max_concurrent_bidi_streams(quinn::VarInt::from_u32(1024));
     client.transport_config(Arc::new(transport));
     let bind_ip = match remote_ip {

@@ -5,6 +5,7 @@ mod cloudflare_metrics;
 mod cloudflare_named;
 pub mod process;
 pub mod tailscale;
+mod tailscale_args;
 mod tailscale_process;
 mod tailscale_state;
 

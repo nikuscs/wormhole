@@ -363,9 +363,7 @@ async fn deliver_http_with_retry(
     let deadline = crate::retry::deadline(policy);
     let attempts = policy.max_attempts.max(1);
     for attempt in 0..attempts {
-        let request_body = Full::new(Bytes::copy_from_slice(&body))
-            .map_err(|never: Infallible| -> BoxError { match never {} })
-            .boxed_unsync();
+        let request_body = retry_request_body(&body);
         let result = tokio::time::timeout_at(
             deadline,
             http_attempt(head.clone(), target, request_body, false),
@@ -375,14 +373,12 @@ async fn deliver_http_with_retry(
             Ok(Ok((response, connection_task))) => {
                 let retry_status = policy.retry_5xx && response.status().is_server_error();
                 if !retry_status {
-                    forward_response(
+                    forward_response_before_deadline(
                         send,
                         response,
                         connection_task,
                         capture,
-                        None,
-                        false,
-                        buffered.then_some(deadline),
+                        deadline,
                     )
                     .await?;
                     return Ok(attempt);
@@ -431,6 +427,27 @@ async fn deliver_http_with_retry(
     }
     write_gateway_timeout(&mut send).await?;
     Err(DriverError::LocalDelivery("local delivery retries exhausted".to_owned()))
+}
+
+async fn forward_response_before_deadline(
+    send: BoxWrite,
+    response: hyper::Response<hyper::body::Incoming>,
+    connection_task: AbortTask,
+    capture: CaptureSink<'_>,
+    deadline: tokio::time::Instant,
+) -> Result<(), DriverError> {
+    tokio::time::timeout_at(
+        deadline,
+        forward_response(send, response, connection_task, capture, None, false, Some(deadline)),
+    )
+    .await
+    .map_err(|_| DriverError::LocalDelivery("local delivery deadline exceeded".to_owned()))?
+}
+
+fn retry_request_body(body: &[u8]) -> ClientBody {
+    Full::new(Bytes::copy_from_slice(body))
+        .map_err(|never: Infallible| -> BoxError { match never {} })
+        .boxed_unsync()
 }
 
 async fn next_response_frame(

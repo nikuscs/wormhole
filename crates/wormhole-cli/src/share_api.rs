@@ -40,16 +40,25 @@ pub async fn share(
     let active = state.manager.list();
     let bindings = state.bindings.read().await.clone();
     let desired = state.desired.read().await.clone();
-    for endpoint in active {
+    let mut matches = Vec::new();
+    for endpoint in &active {
         let Some((key, index)) = bindings.get(&endpoint.id) else {
             continue;
         };
         let Some(service) = desired.get(key) else {
             continue;
         };
-        if endpoint_id != Some(endpoint.id) && service.service.name != request.target {
+        let priority = if endpoint_id == Some(endpoint.id) {
+            0
+        } else if endpoint_id.is_some() {
             continue;
-        }
+        } else if key.matches_project_target(&request.target) {
+            1
+        } else if service.service.name == request.target {
+            2
+        } else {
+            continue;
+        };
         let Some(spec) = service.endpoints.get(*index) else {
             continue;
         };
@@ -59,9 +68,33 @@ pub async fn share(
         let Some(public_url) = endpoint.urls.first() else {
             continue;
         };
-        let url = wormhole_core::share::mint_share_url(public_url, &request.path, link_key, expiry)
-            .map_err(|error| ApiError::invalid(error.to_string()))?;
-        return Ok(Json(ShareResponse { url, expires_unix: expiry }));
+        matches.push((priority, endpoint.id, public_url, link_key));
     }
-    Err(ApiError::not_found("link-enabled endpoint not found"))
+    let priorities = matches.iter().map(|candidate| candidate.0).collect::<Vec<_>>();
+    let selected = select_unique_priority(&priorities)?;
+    let (_, _, public_url, link_key) = matches[selected];
+    let url = wormhole_core::share::mint_share_url(public_url, &request.path, link_key, expiry)
+        .map_err(|error| ApiError::invalid(error.to_string()))?;
+    Ok(Json(ShareResponse { url, expires_unix: expiry }))
 }
+
+fn select_unique_priority(priorities: &[u8]) -> Result<usize, ApiError> {
+    let Some(priority) = priorities.iter().copied().min() else {
+        return Err(ApiError::not_found("link-enabled endpoint not found"));
+    };
+    let mut matches = priorities
+        .iter()
+        .enumerate()
+        .filter_map(|(index, candidate)| (*candidate == priority).then_some(index));
+    let selected = matches.next().expect("minimum priority must have a match");
+    if matches.next().is_some() {
+        return Err(ApiError::conflict(
+            "share target is ambiguous; use an endpoint UUID or project/service identity",
+        ));
+    }
+    Ok(selected)
+}
+
+#[cfg(test)]
+#[path = "share_api_tests.rs"]
+mod tests;

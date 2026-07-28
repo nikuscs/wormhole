@@ -23,6 +23,7 @@ use crate::{
     driver::{DriverEvent, DriverRegistry, EndpointEvent, TunnelDriver},
     error::{DriverError, ManagerError},
     ifaces::IfaceResolver,
+    manager_events::forward_event,
     manager_status::{apply_ready_urls, preflight_driver, validate_capabilities},
     model::{
         ActiveEndpoint, EndpointSpec, EndpointStatus, ResolvedTarget, Service, ServiceProto,
@@ -151,17 +152,22 @@ impl TunnelManager {
         {
             return Err(ManagerError::Cleanup(message));
         }
-        self.set_status(endpoint, EndpointStatus::Offline);
+        self.endpoints.write().remove(&endpoint);
         Ok(())
     }
 
     /// Fails and forgets an endpoint after a daemon-side durability error.
     pub async fn fail_endpoint(&self, endpoint: Uuid, message: String) {
+        let snapshot = self.endpoints.read().get(&endpoint).cloned();
         let _closed = self.close_with_forget(endpoint, true).await;
+        if let Some(mut snapshot) = snapshot {
+            snapshot.status = EndpointStatus::Error(message.clone());
+            self.endpoints.write().insert(endpoint, snapshot);
+        }
         self.set_status(endpoint, EndpointStatus::Error(message));
     }
 
-    /// Closes an endpoint and removes it from the manager snapshot.
+    /// Closes an endpoint and ensures it is absent from the manager snapshot.
     pub async fn discard(&self, endpoint: Uuid) {
         let _closed = self.close(endpoint).await;
         self.endpoints.write().remove(&endpoint);
@@ -341,8 +347,10 @@ impl TunnelManager {
                 persist: wormhole_proto::frames::Persistence::Temporary,
                 buffer: None,
                 auth: None,
-                retry: None,
-                inspect: config.defaults.inspect,
+                retry: (proto == ServiceProto::Http)
+                    .then(|| config.defaults.retry.clone())
+                    .flatten(),
+                inspect: proto == ServiceProto::Http && config.defaults.inspect,
                 inspect_assets: false,
                 capture_body_max: 1024 * 1024,
                 reservation: None,
@@ -389,39 +397,18 @@ async fn run_endpoint(
                     barrier.notify_one();
                     continue;
                 }
-                let forward = driver_events_tx.send(EndpointEvent {
-                    endpoint: id,
-                    event: event.clone(),
-                });
-                tokio::pin!(forward);
-                tokio::select! {
-                    biased;
-                    sent = &mut forward => {
-                        if sent.is_err() {
-                            stop.cancel();
-                            let _drained = tokio::time::timeout(
-                                Duration::from_secs(10),
-                                &mut run,
-                            ).await;
-                            update_status(
-                                &endpoints,
-                                &status_tx,
-                                id,
-                                EndpointStatus::Error(
-                                    "daemon event receiver closed".to_owned(),
-                                ),
-                            );
-                            return;
-                        }
-                    }
-                    result = &mut run => {
-                        let status = result.map_or_else(
-                            |error| EndpointStatus::Error(error.to_string()),
-                            |()| EndpointStatus::Offline,
-                        );
-                        update_status(&endpoints, &status_tx, id, status);
-                        return;
-                    }
+                if !forward_event(
+                    &driver_events_tx,
+                    id,
+                    &event,
+                    &stop,
+                    &mut run,
+                    &endpoints,
+                    &status_tx,
+                )
+                .await
+                {
+                    return;
                 }
                 let awaits_durability = external_handoff.load(Ordering::Acquire)
                     && matches!(&event, DriverEvent::Ready { reservation: Some(_), .. });
@@ -477,7 +464,7 @@ fn apply_event(
     }
 }
 
-fn update_status(
+pub(crate) fn update_status(
     endpoints: &RwLock<HashMap<Uuid, ActiveEndpoint>>,
     status_tx: &broadcast::Sender<StatusChange>,
     id: Uuid,

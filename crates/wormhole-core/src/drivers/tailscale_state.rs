@@ -191,6 +191,8 @@ pub async fn remove_install(
             format!("--tcp={}", spec.public_port.unwrap_or_else(|| target.0.port())),
             "off".to_owned(),
         ]
+    } else if let Some(port) = spec.public_port {
+        vec![mode.to_owned(), format!("--https={port}"), "off".to_owned()]
     } else {
         vec![mode.to_owned(), target_text(spec, target), "off".to_owned()]
     };
@@ -254,7 +256,7 @@ pub fn binding_snapshot(
     let port = if spec.proto == ServiceProto::Tcp {
         spec.public_port.unwrap_or_else(|| target.0.port())
     } else {
-        443
+        spec.public_port.unwrap_or(443)
     };
     let mut bindings = Vec::new();
     collect_port_bindings(&value, &port.to_string(), spec.proto, &mut bindings);

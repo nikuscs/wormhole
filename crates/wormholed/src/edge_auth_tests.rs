@@ -1,7 +1,7 @@
 use argon2::{Argon2, PasswordHasher, password_hash::SaltString};
 
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
-use hmac::{Hmac, Mac as _};
+use hmac::{Hmac, KeyInit as _, Mac as _};
 use sha2::Sha256;
 
 use super::{verify_basic, verify_link_token};

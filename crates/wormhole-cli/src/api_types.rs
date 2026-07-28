@@ -16,7 +16,7 @@ use wormhole_core::{
     keys_store::IdentityStore,
 };
 
-use crate::state_db::{DesiredService, StateDb};
+use crate::state_db::{DesiredKey, DesiredService, StateDb};
 
 #[derive(Clone)]
 pub struct ApiState {
@@ -25,9 +25,10 @@ pub struct ApiState {
     pub config_path: Option<std::path::PathBuf>,
     pub identities: Arc<IdentityStore>,
     pub database: Arc<StateDb>,
-    pub desired: Arc<RwLock<BTreeMap<String, DesiredService>>>,
-    pub bindings: Arc<RwLock<HashMap<Uuid, (String, usize)>>>,
+    pub desired: Arc<RwLock<BTreeMap<DesiredKey, DesiredService>>>,
+    pub bindings: Arc<RwLock<HashMap<Uuid, (DesiredKey, usize)>>>,
     pub persistence_lock: Arc<Mutex<()>>,
+    pub mutation_lock: Arc<Mutex<()>>,
     pub expose_lock: Arc<Mutex<()>>,
     pub captures: Arc<RwLock<crate::capture_store::CaptureStore>>,
     pub started: jiff::Timestamp,

@@ -27,8 +27,9 @@ use crate::{
 };
 
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
-const KEEP_ALIVE: Duration = Duration::from_secs(3);
-const IDLE_TIMEOUT: Duration = Duration::from_secs(10);
+const KEEP_ALIVE: Duration = Duration::from_secs(15);
+const IDLE_TIMEOUT: Duration = Duration::from_mins(1);
+const LIMITER_CLEANUP_INTERVAL: Duration = Duration::from_mins(10);
 
 type IpRateLimiter = RateLimiter<IpAddr, DashMapStateStore<IpAddr>, DefaultClock>;
 type QuicIo = tokio::io::Join<quinn::RecvStream, quinn::SendStream>;
@@ -68,21 +69,40 @@ impl QuicServer {
 
     /// Accepts connections until the endpoint is closed.
     pub async fn run(&self) {
-        while let Some(incoming) = self.endpoint.accept().await {
-            let remote_ip = incoming.remote_address().ip();
-            if self.limiter.check_key(&remote_ip).is_err() {
-                incoming.refuse();
-                continue;
-            }
-            let state = Arc::clone(&self.state);
-            let server_name = self.server_name.clone();
-            tokio::spawn(async move {
-                if let Err(error) = handle_connection(incoming, state, &server_name).await {
-                    tracing::warn!(%error, %remote_ip, "QUIC client session ended");
+        let mut cleanup = tokio::time::interval(LIMITER_CLEANUP_INTERVAL);
+        cleanup.tick().await;
+        loop {
+            tokio::select! {
+                incoming = self.endpoint.accept() => {
+                    let Some(incoming) = incoming else {
+                        return;
+                    };
+                    self.accept(incoming);
                 }
-            });
+                _ = cleanup.tick() => cleanup_limiter(&self.limiter),
+            }
         }
     }
+
+    fn accept(&self, incoming: Incoming) {
+        let remote_ip = incoming.remote_address().ip();
+        if self.limiter.check_key(&remote_ip).is_err() {
+            incoming.refuse();
+            return;
+        }
+        let state = Arc::clone(&self.state);
+        let server_name = self.server_name.clone();
+        tokio::spawn(async move {
+            if let Err(error) = handle_connection(incoming, state, &server_name).await {
+                tracing::warn!(%error, %remote_ip, "QUIC client session ended");
+            }
+        });
+    }
+}
+
+fn cleanup_limiter(limiter: &IpRateLimiter) {
+    limiter.retain_recent();
+    limiter.shrink_to_fit();
 }
 
 fn handshake_limiter(handshakes_per_minute: u32) -> Result<IpRateLimiter, QuicError> {
@@ -160,6 +180,10 @@ pub(crate) async fn run_io_session<S: tokio::io::AsyncRead + tokio::io::AsyncWri
     server_name: &str,
 ) -> Result<(), QuicError> {
     let authenticated = Arc::new(Mutex::new(None));
+    let max_streams = bounded_max_streams(
+        state.limits.max_streams_per_session,
+        wormhole_proto::mux_runtime::MAX_STREAMS,
+    );
     let handshake = timeout(
         HANDSHAKE_TIMEOUT,
         authenticate_channel(
@@ -167,6 +191,7 @@ pub(crate) async fn run_io_session<S: tokio::io::AsyncRead + tokio::io::AsyncWri
             Arc::clone(&state),
             server_name,
             Arc::clone(&authenticated),
+            max_streams,
         ),
     )
     .await;
@@ -198,6 +223,10 @@ pub(crate) async fn run_io_session<S: tokio::io::AsyncRead + tokio::io::AsyncWri
     result.map_err(QuicError::Session)
 }
 
+const fn bounded_max_streams(configured: u32, transport_limit: u32) -> u32 {
+    if configured < transport_limit { configured } else { transport_limit }
+}
+
 async fn authenticate(
     connection: &quinn::Connection,
     state: Arc<AppState>,
@@ -205,11 +234,13 @@ async fn authenticate(
     authenticated: Arc<Mutex<Option<Authenticated>>>,
 ) -> Result<Option<(ControlChannel<QuicIo>, Authenticated)>, QuicError> {
     let (send, recv) = connection.accept_bi().await?;
+    let max_streams = state.limits.max_streams_per_session;
     authenticate_channel(
         ControlChannel::new(tokio::io::join(recv, send)),
         state,
         server_name,
         authenticated,
+        max_streams,
     )
     .await
 }
@@ -219,15 +250,13 @@ async fn authenticate_channel<S: tokio::io::AsyncRead + tokio::io::AsyncWrite + 
     state: Arc<AppState>,
     server_name: &str,
     authenticated: Arc<Mutex<Option<Authenticated>>>,
+    max_streams: u32,
 ) -> Result<Option<(ControlChannel<S>, Authenticated)>, QuicError> {
-    let limits = Limits {
-        max_binds: state.limits.max_binds_per_key,
-        max_streams: state.limits.max_streams_per_session,
-    };
+    let limits = Limits { max_binds: state.limits.max_binds_per_key, max_streams };
     let callback_state = Arc::clone(&state);
     let callback_result = Arc::clone(&authenticated);
     let mut handshake = ServerHandshake::new(server_name, limits, None, move |public_key| {
-        authorize_key(&callback_state, &callback_result, public_key)
+        authorize_key(&callback_state, &callback_result, public_key, max_streams)
     });
     let hello = channel.recv().await?;
     if !send_handshake_step(&mut channel, handshake.step(&hello)?).await? {
@@ -278,9 +307,11 @@ fn authorize_key(
     state: &AppState,
     authenticated: &Mutex<Option<Authenticated>>,
     public_key: &str,
+    max_streams: u32,
 ) -> ProtoKeyDecision {
     match state.auth.is_authorized(public_key) {
-        Ok(KeyDecision::Allowed { fingerprint, limits, .. }) => {
+        Ok(KeyDecision::Allowed { fingerprint, mut limits, .. }) => {
+            limits.max_streams = limits.max_streams.min(max_streams);
             *authenticated.lock() =
                 Some(Authenticated { fingerprint, limits, session_open: false });
             ProtoKeyDecision::Authorized

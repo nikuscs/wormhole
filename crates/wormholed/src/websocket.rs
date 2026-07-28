@@ -10,7 +10,7 @@ use tokio_tungstenite::{
     tungstenite::protocol::{Message, Role, WebSocketConfig},
 };
 use wormhole_proto::{
-    mux::MAX_PAYLOAD,
+    mux::{MAX_CONTROL_PAYLOAD, MAX_PAYLOAD, WsMessage},
     mux_runtime::{MuxEndpoint, MuxRole, reset_network_frame},
 };
 
@@ -43,8 +43,8 @@ fn websocket_config() -> WebSocketConfig {
         .read_buffer_size(MAX_PAYLOAD)
         .write_buffer_size(MAX_PAYLOAD)
         .max_write_buffer_size(4 * MAX_PAYLOAD)
-        .max_message_size(Some(2 * MAX_PAYLOAD + 4))
-        .max_frame_size(Some(2 * MAX_PAYLOAD + 4))
+        .max_message_size(Some(MAX_CONTROL_PAYLOAD + 4))
+        .max_frame_size(Some(MAX_CONTROL_PAYLOAD + 4))
 }
 
 fn oversized_data_channel(payload: &[u8]) -> Option<u32> {
@@ -65,7 +65,7 @@ async fn bridge(
             incoming = source.next() => {
                 match incoming {
                     Some(Ok(Message::Binary(payload))) => {
-                        if payload.len() > MAX_PAYLOAD + 4 {
+                        if WsMessage::decode(&payload).is_err() {
                             let Some(channel) = oversized_data_channel(&payload) else { return };
                             let Ok(reset) = reset_network_frame(channel) else { return };
                             if sink.send(Message::Binary(reset.clone().into())).await.is_err()
@@ -88,7 +88,9 @@ async fn bridge(
             }
             message = outbound.recv() => {
                 let Some(message) = message else { return };
-                if sink.send(Message::Binary(message.into())).await.is_err() {
+                if WsMessage::decode(&message).is_err()
+                    || sink.send(Message::Binary(message.into())).await.is_err()
+                {
                     return;
                 }
             }

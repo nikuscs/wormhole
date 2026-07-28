@@ -297,8 +297,12 @@ pub fn parse_target(value: &str) -> Result<Target, CliError> {
     }
 }
 
-const fn nonzero_port(port: u16) -> Result<u16, CliError> {
-    if port == 0 { Err(CliError::Invalid(String::new())) } else { Ok(port) }
+fn nonzero_port(port: u16) -> Result<u16, CliError> {
+    if port == 0 {
+        Err(CliError::Invalid("target port must be non-zero".to_owned()))
+    } else {
+        Ok(port)
+    }
 }
 
 fn default_name(proto: ServiceProto, target: &Target) -> String {
@@ -375,3 +379,7 @@ pub fn endpoint_result(endpoints: &[ActiveEndpoint]) -> Result<(), CliError> {
         Err(CliError::Partial)
     }
 }
+
+#[cfg(test)]
+#[path = "tunnel_commands_tests.rs"]
+mod tests;

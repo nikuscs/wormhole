@@ -5,7 +5,7 @@ use std::{
 
 use crate::{
     harness::{EchoServer, TestClient, TestRelay},
-    helpers::spawn_relay_request,
+    helpers::{attempt_deadline, spawn_relay_request},
     semantics_server::SemanticsServer,
 };
 
@@ -50,7 +50,8 @@ fn daemon_sigkill_during_request_returns_without_hanging() {
 fn wait_reconnecting(client: &TestClient, timeout: Duration) {
     let deadline = Instant::now() + timeout;
     while Instant::now() < deadline {
-        let output = client.command(&["--json", "ls"]).expect("list");
+        let output =
+            client.command_until(&["--json", "ls"], attempt_deadline(deadline)).expect("list");
         if output.status.success() {
             let endpoints: Vec<serde_json::Value> =
                 serde_json::from_slice(&output.stdout).expect("endpoints");
@@ -67,7 +68,7 @@ fn wait_reconnecting(client: &TestClient, timeout: Duration) {
 fn wait_status(relay: &TestRelay, host: &str, url: &str, expected: u16, timeout: Duration) {
     let deadline = Instant::now() + timeout;
     while Instant::now() < deadline {
-        if request_status(relay, host, url) == expected {
+        if request_status_until(relay, host, url, deadline) == expected {
             return;
         }
         thread::sleep(Duration::from_millis(100));
@@ -77,6 +78,13 @@ fn wait_status(relay: &TestRelay, host: &str, url: &str, expected: u16, timeout:
 
 fn request_status(relay: &TestRelay, host: &str, url: &str) -> u16 {
     relay.request(host, url).ok().map_or(0, |output| status_from_output(&output.stdout))
+}
+
+fn request_status_until(relay: &TestRelay, host: &str, url: &str, deadline: Instant) -> u16 {
+    relay
+        .request_until(host, url, attempt_deadline(deadline))
+        .ok()
+        .map_or(0, |output| status_from_output(&output.stdout))
 }
 
 fn status_from_output(output: &[u8]) -> u16 {

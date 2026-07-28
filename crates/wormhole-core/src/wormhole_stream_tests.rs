@@ -186,6 +186,48 @@ async fn retries_replayable_request_after_server_error() {
 }
 
 #[tokio::test]
+async fn live_response_body_cannot_outlive_retry_deadline() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("listener");
+    let target = listener.local_addr().expect("target");
+    let local = tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.expect("accept");
+        let mut request = vec![0_u8; 4096];
+        let _read = stream.read(&mut request).await.expect("request");
+        stream
+            .write_all(b"HTTP/1.1 200 OK\r\ncontent-length: 5\r\nconnection: close\r\n\r\n")
+            .await
+            .expect("response head");
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+    });
+    let retry = RetryPolicy {
+        max_attempts: 1,
+        initial_delay_ms: 0,
+        max_delay_ms: 0,
+        retry_connect: true,
+        retry_5xx: true,
+        max_body_bytes: 1024,
+        total_deadline_ms: 100,
+    };
+    let (client, relay) = tokio::io::duplex(16 * 1024);
+    let (relay_read, relay_write) = tokio::io::split(relay);
+    let started = tokio::time::Instant::now();
+    let dispatch = tokio::spawn(dispatch_stream(
+        Box::new(relay_write),
+        Box::new(relay_read),
+        http_header("GET", "/slow", 0),
+        endpoint(target, Some(retry), false),
+    ));
+    let (mut response, mut request) = tokio::io::split(client);
+    request.shutdown().await.expect("request eof");
+    assert_eq!(read_response_head(&mut response).await.expect("response head").status, 200);
+    let mut body = Vec::new();
+    response.read_to_end(&mut body).await.expect("response closes");
+    dispatch.await.expect("dispatch task");
+    assert!(started.elapsed() < std::time::Duration::from_millis(500));
+    local.abort();
+}
+
+#[tokio::test]
 async fn forwards_spooled_error_when_retry_attempts_are_exhausted() {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("listener");
     let target = listener.local_addr().expect("target");
