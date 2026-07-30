@@ -1,0 +1,38 @@
+//! Wormhole client engine, driver registry, and tunnel lifecycle management.
+
+pub mod capture;
+pub mod config;
+pub mod doctor;
+pub mod driver;
+pub mod drivers;
+pub mod error;
+pub mod ifaces;
+pub mod keys_store;
+pub mod manager;
+mod manager_events;
+mod manager_status;
+pub mod model;
+pub mod ports;
+pub mod remotes;
+pub mod retry;
+pub mod share;
+mod wormhole_bind;
+mod wormhole_conn;
+mod wormhole_conn_commands;
+mod wormhole_conn_types;
+mod wormhole_connect;
+pub mod wormhole_driver;
+mod wormhole_http;
+mod wormhole_request_body;
+mod wormhole_retry_response;
+mod wormhole_stream;
+mod wormhole_transport;
+
+pub use config::ClientConfig;
+pub use doctor::doctor;
+pub use driver::{DriverEvent, DriverHealth, DriverRegistry, EndpointEvent, TunnelDriver};
+pub use error::{ConfigError, DriverError, IdentityError, IfaceError, ManagerError, PortError};
+pub use manager::TunnelManager;
+pub use model::{ActiveEndpoint, CapturedRequest, EndpointSpec, ResolvedTarget, Service, Target};
+pub use remotes::Remote;
+pub use wormhole_connect::enroll_remote;

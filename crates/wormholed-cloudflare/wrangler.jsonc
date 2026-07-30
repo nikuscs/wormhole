@@ -1,0 +1,31 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "wormholed-cloudflare",
+  "main": "build/worker/shim.mjs",
+  "compatibility_date": "2026-07-29",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": true,
+  "vars": {
+    "RELAY_DOMAIN": "example.com",
+    "CONTROL_DOMAIN": "relay.example.com"
+  },
+  "durable_objects": {
+    "bindings": [
+      { "name": "RELAY", "class_name": "RelayDurableObject" }
+    ]
+  },
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["RelayDurableObject"] }
+  ],
+  // Opt in by setting enabled/invocation_logs to true. Keep sampling bounded in production.
+  "observability": {
+    "enabled": false,
+    "head_sampling_rate": 0.01,
+    "logs": {
+      "invocation_logs": false
+    }
+  },
+  "build": {
+    "command": "cargo install -q worker-build@0.8.5 && worker-build --release"
+  }
+}

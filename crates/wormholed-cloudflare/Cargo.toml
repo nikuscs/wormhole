@@ -1,0 +1,29 @@
+[package]
+name = "wormholed-cloudflare"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[lints]
+workspace = true
+
+[dependencies]
+base64.workspace = true
+futures.workspace = true
+getrandom.workspace = true
+hmac.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+subtle.workspace = true
+thiserror.workspace = true
+uuid.workspace = true
+wasm-bindgen.workspace = true
+wasm-bindgen-futures.workspace = true
+worker.workspace = true
+wormhole-proto = { path = "../wormhole-proto" }

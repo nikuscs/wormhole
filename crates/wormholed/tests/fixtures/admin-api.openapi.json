@@ -1,0 +1,639 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "wormholed",
+    "description": "Self-hosted relay server for Wormhole",
+    "license": {
+      "name": "MIT",
+      "identifier": "MIT"
+    },
+    "version": "0.0.0"
+  },
+  "paths": {
+    "/v1/binds": {
+      "get": {
+        "tags": [],
+        "operationId": "list_binds",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/BindResponse"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/binds/{id}": {
+      "delete": {
+        "tags": [],
+        "operationId": "delete_bind",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": ""
+          },
+          "404": {
+            "description": ""
+          }
+        }
+      }
+    },
+    "/v1/invites": {
+      "get": {
+        "tags": [
+          "crate::admin_invites"
+        ],
+        "operationId": "list",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/InviteResponse"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "crate::admin_invites"
+        ],
+        "operationId": "create",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateInviteRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreatedInviteResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": ""
+          }
+        }
+      }
+    },
+    "/v1/invites/{id}": {
+      "delete": {
+        "tags": [
+          "crate::admin_invites"
+        ],
+        "operationId": "revoke",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": ""
+          },
+          "400": {
+            "description": ""
+          }
+        }
+      }
+    },
+    "/v1/keys": {
+      "get": {
+        "tags": [],
+        "operationId": "list_keys",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/KeyResponse"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [],
+        "operationId": "authorize_key",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AuthorizeKeyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KeyFingerprint"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/keys/{fingerprint}": {
+      "delete": {
+        "tags": [],
+        "operationId": "revoke_key",
+        "parameters": [
+          {
+            "name": "fingerprint",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": ""
+          },
+          "400": {
+            "description": ""
+          }
+        }
+      }
+    },
+    "/v1/status": {
+      "get": {
+        "tags": [],
+        "operationId": "status",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatusResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/webhooks/failed": {
+      "get": {
+        "tags": [],
+        "operationId": "list_failed_webhooks",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/FailedWebhookResponse"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/webhooks/failed/{bind}/{seq}": {
+      "delete": {
+        "tags": [],
+        "operationId": "delete_failed_webhook",
+        "parameters": [
+          {
+            "name": "bind",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "seq",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": ""
+          },
+          "404": {
+            "description": ""
+          }
+        }
+      }
+    },
+    "/v1/webhooks/failed/{bind}/{seq}/retry": {
+      "post": {
+        "tags": [],
+        "operationId": "retry_failed_webhook",
+        "parameters": [
+          {
+            "name": "bind",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "seq",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": ""
+          },
+          "404": {
+            "description": ""
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "AuthorizeKeyRequest": {
+        "type": "object",
+        "required": [
+          "public_key",
+          "name"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "public_key": {
+            "type": "string"
+          }
+        }
+      },
+      "BindResponse": {
+        "type": "object",
+        "required": [
+          "id",
+          "endpoint",
+          "state",
+          "persistent",
+          "key_fingerprint",
+          "authentication",
+          "buffering"
+        ],
+        "properties": {
+          "authentication": {
+            "type": "boolean"
+          },
+          "buffering": {
+            "type": "boolean"
+          },
+          "endpoint": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "key_fingerprint": {
+            "type": "string"
+          },
+          "persistent": {
+            "type": "boolean"
+          },
+          "state": {
+            "type": "string"
+          }
+        }
+      },
+      "CertificateExpiry": {
+        "type": "object",
+        "required": [
+          "domain",
+          "expires_unix"
+        ],
+        "properties": {
+          "domain": {
+            "type": "string"
+          },
+          "expires_unix": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "CreateInviteRequest": {
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "properties": {
+          "max_uses": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "minimum": 0
+          },
+          "name": {
+            "type": "string"
+          },
+          "ttl_secs": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
+      "CreatedInviteResponse": {
+        "type": "object",
+        "required": [
+          "id",
+          "token",
+          "name",
+          "created_at"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "expires_at": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "id": {
+            "type": "string"
+          },
+          "max_uses": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "minimum": 0
+          },
+          "name": {
+            "type": "string"
+          },
+          "token": {
+            "type": "string"
+          }
+        }
+      },
+      "ErrorResponse": {
+        "type": "object",
+        "required": [
+          "error"
+        ],
+        "properties": {
+          "error": {
+            "type": "string"
+          }
+        }
+      },
+      "FailedWebhookResponse": {
+        "type": "object",
+        "required": [
+          "bind",
+          "seq",
+          "reason",
+          "failed_at"
+        ],
+        "properties": {
+          "bind": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "failed_at": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "seq": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
+      "InviteResponse": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "created_at",
+          "uses",
+          "revoked"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "expires_at": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "id": {
+            "type": "string"
+          },
+          "max_uses": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "minimum": 0
+          },
+          "name": {
+            "type": "string"
+          },
+          "revoked": {
+            "type": "boolean"
+          },
+          "uses": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          }
+        }
+      },
+      "KeyFingerprint": {
+        "type": "object",
+        "required": [
+          "fingerprint"
+        ],
+        "properties": {
+          "fingerprint": {
+            "type": "string"
+          }
+        }
+      },
+      "KeyResponse": {
+        "type": "object",
+        "required": [
+          "fingerprint",
+          "name",
+          "created",
+          "revoked"
+        ],
+        "properties": {
+          "created": {
+            "type": "string"
+          },
+          "fingerprint": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "revoked": {
+            "type": "boolean"
+          }
+        }
+      },
+      "StatusResponse": {
+        "type": "object",
+        "required": [
+          "uptime_seconds",
+          "sessions",
+          "binds",
+          "streams",
+          "certificate_expiries"
+        ],
+        "properties": {
+          "binds": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "certificate_error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "certificate_expiries": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CertificateExpiry"
+            }
+          },
+          "http_addr": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "https_addr": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "quic_addr": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "sessions": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "streams": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "uptime_seconds": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      }
+    }
+  },
+  "tags": [
+    {
+      "name": "admin",
+      "description": "Local relay administration"
+    }
+  ]
+}

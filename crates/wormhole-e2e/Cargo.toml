@@ -1,0 +1,30 @@
+[package]
+name = "wormhole-e2e"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+bytes.workspace = true
+camino.workspace = true
+flate2.workspace = true
+http-body-util.workspace = true
+hyper.workspace = true
+hyper-util.workspace = true
+rcgen.workspace = true
+reqwest.workspace = true
+rustls.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+tempfile.workspace = true
+tokio.workspace = true
+tokio-tungstenite.workspace = true
+toml.workspace = true
+wormhole-core = { path = "../wormhole-core" }
+wormhole-proto = { path = "../wormhole-proto" }
+wormholed = { path = "../wormholed" }

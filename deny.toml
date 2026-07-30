@@ -1,0 +1,23 @@
+[advisories]
+unmaintained = "all"
+ignore = [
+  # Transitive through netdev; no maintained compatible replacement is available.
+  "RUSTSEC-2024-0436",
+]
+
+[licenses]
+allow = [
+  "MIT",
+  "Apache-2.0",
+  "Apache-2.0 WITH LLVM-exception",
+  "BSD-2-Clause",
+  "BSD-3-Clause",
+  "ISC",
+  "Unicode-3.0",
+  "Zlib",
+  "CDLA-Permissive-2.0",
+  "MPL-2.0",
+]
+
+[bans]
+multiple-versions = "warn"

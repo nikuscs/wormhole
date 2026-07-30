@@ -1,0 +1,10 @@
+{
+  "name": "wormhole-vite-fixture",
+  "private": true,
+  "scripts": {
+    "dev": "vite"
+  },
+  "devDependencies": {
+    "vite": "8.1.5"
+  }
+}

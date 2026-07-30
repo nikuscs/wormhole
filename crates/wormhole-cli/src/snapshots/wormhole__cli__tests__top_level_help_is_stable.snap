@@ -1,0 +1,49 @@
+---
+source: crates/wormhole-cli/src/cli_tests.rs
+assertion_line: 9
+expression: help
+---
+Wormhole exposes local services through one or more secure tunnel providers
+
+Usage: wormhole [OPTIONS] <COMMAND>
+
+Commands:
+  http         Expose a local HTTP service
+  tcp          Expose a local TCP service
+  run          Run a command and expose its listening port
+  up           Start services from wormhole.toml
+  down         Stop project services or endpoint identifiers
+  ls           List active endpoints
+  status       Show daemon status
+  inspect      Inspect one captured HTTP request
+  requests     List or manage captured HTTP requests
+  replay       Replay one captured request
+  interfaces   List discovered interface aliases
+  domains      List public domains advertised by configured Wormhole remotes
+  relay        Deploy and manage self-hosted relay infrastructure
+  remote       Manage named Wormhole remotes
+  key          Manage the client identity key
+  doctor       Run structured health checks
+  daemon       Manage the per-user daemon
+  completions  Generate shell completions
+  share        Create an expiring share link
+  help         Print this message or the help of the given subcommand(s)
+
+Options:
+      --json
+          Emit stable JSON instead of human-readable output
+
+      --config <PATH>
+          Override the global configuration file
+
+  -q, --quiet
+          Suppress nonessential diagnostics
+
+  -v, --verbose...
+          Increase diagnostic verbosity (repeat for trace logging)
+
+  -h, --help
+          Print help
+
+  -V, --version
+          Print version

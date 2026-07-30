@@ -1,0 +1,9 @@
+{
+  "BackendState": "Running",
+  "Self": {
+    "DNSName": "node.example.ts.net.",
+    "CapMap": {
+      "https://tailscale.com/cap/funnel-ports": [443, 8443, 10000]
+    }
+  }
+}

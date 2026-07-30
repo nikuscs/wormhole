@@ -1,0 +1,14 @@
+target/
+dist/
+node_modules/
+.wrangler/
+/crates/wormholed-cloudflare/build/
+/crates/wormholed-cloudflare/deploy-bundle/
+/crates/wormholed-cloudflare/worker-startup.cpuprofile
+*.pem
+*.key
+.env
+.DS_Store
+wormhole.toml.local
+
+.pi-subagents/

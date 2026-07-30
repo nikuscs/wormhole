@@ -1,0 +1,6 @@
+---
+source: crates/wormhole-proto/src/keys_tests.rs
+expression: "format!(\"public={}\\nsignature={signature}\", identity.public_base64())"
+---
+public=6kpsY+KcUgq+9VB7Ey7F+ZVHdq6+vnuSQh7qaRRG0iw=
+signature=ZRBMcmOkHhdqfky1xYeboGkih6fP6xtxGjRkbiJKzkZvl8Lm5lStF8qyz8PIdv4GYnJvaz0Yso0D+cBcxoXVCw==

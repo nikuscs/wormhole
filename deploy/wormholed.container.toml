@@ -1,0 +1,24 @@
+[server]
+domains = ["localtest.wormhole"]
+quic_addr = "0.0.0.0:443"
+https_addr = "0.0.0.0:443"
+http_addr = "0.0.0.0:80"
+data_dir = "/var/lib/wormhole"
+
+[tls]
+mode = "self-signed"
+
+[tcp.port_range]
+start = 10000
+end = 20000
+
+[limits]
+max_binds_per_key = 32
+max_sessions_per_key = 8
+max_streams_per_session = 1024
+handshake_per_ip_per_min = 30
+buffer_max_bytes_per_key = "100MiB"
+buffer_max_bytes_total = "1GiB"
+
+[auth]
+authorized_keys = "/var/lib/wormhole/authorized_keys"

@@ -1,0 +1,6 @@
+---
+source: crates/wormhole-cli/src/output_tests.rs
+expression: endpoints.render_styled(true)
+---
+[1m[36m🌀 wormhole[39m[0m
+[1m[32m✓[39m[0m web	online	[4m[36mhttps://web.example.com[39m[0m

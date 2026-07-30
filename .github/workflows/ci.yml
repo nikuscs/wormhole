@@ -1,0 +1,98 @@
+name: CI
+
+on:
+  workflow_dispatch:
+  pull_request:
+    types: [labeled]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -Dwarnings
+  CC: clang
+  CXX: clang++
+
+jobs:
+  checks:
+    name: Linux checks
+    if: github.event_name == 'workflow_dispatch' || github.event.label.name == 'run-ci'
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - name: Install system dependencies
+        run: sudo apt-get update && sudo apt-get install -y clang libc6-dev shellcheck
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: linux-ci
+      - name: Format
+        run: cargo fmt --all -- --check
+      - name: Source size
+        run: make size
+      - name: Shell scripts
+        run: shellcheck scripts/wormholed-bootstrap.sh scripts/test-wormholed-bootstrap.sh
+      - name: Clippy
+        run: cargo clippy --all-targets --locked -- -D warnings
+      - name: Unit and integration tests
+        run: cargo test --workspace --locked
+      - name: Bootstrap integration
+        run: |
+          cargo build -p wormholed --locked
+          WORMHOLE_TEST_REAL_BINARY=target/debug/wormholed scripts/test-wormholed-bootstrap.sh
+      - name: End-to-end
+        run: make e2e
+
+  policy:
+    name: Dependency policy
+    if: github.event_name == 'workflow_dispatch' || github.event.label.name == 'run-ci'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit
+      - run: cargo audit
+
+  macos:
+    name: Test (macOS)
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: macos-ci
+      - run: cargo test --workspace --locked
+
+  coverage:
+    name: Coverage
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
+      - uses: taiki-e/install-action@cargo-llvm-cov
+      - name: Install Linux build dependencies
+        run: sudo apt-get update && sudo apt-get install -y clang libc6-dev
+      - run: cargo llvm-cov -p wormhole-proto --fail-under-lines 75
+      - run: cargo llvm-cov -p wormhole-core --fail-under-lines 75
+      - run: make coverage-e2e
+      - uses: actions/upload-artifact@v6
+        with:
+          name: coverage-html
+          path: target/llvm-cov/html
