@@ -18,12 +18,10 @@ use crate::{
         cloudflare_command::{
             CommandOutput, command_error, discover_cloudflared, ensure_healthy, strings, strings3,
         },
-        cloudflare_metrics::{discover_quick_url, ready},
         cloudflare_named::{
             HostClaim, HostClaims, cloudflare_home, deterministic_name, ensure_named_login,
             find_json_string, find_uuid, forget_route, named_config, record_route, route_is_owned,
         },
-        process::{ManagedProcess, ProcessSpec, forward_logs, wait_healthy},
     },
     error::DriverError,
     model::{EndpointSpec, ResolvedTarget, ServiceProto},
@@ -33,12 +31,25 @@ use crate::{
 const INSTALL_HINT: &str = "install: brew install cloudflared";
 const INITIAL_BACKOFF: Duration = Duration::from_millis(250);
 const MAX_BACKOFF: Duration = Duration::from_secs(30);
+const NAMED_DNS_TIMEOUT: Duration = Duration::from_secs(30);
+
+#[path = "cloudflare_runtime.rs"]
+mod cloudflare_runtime;
+
+use cloudflare_runtime::{
+    NamedConnector, NamedRoute, NamedTunnel, announce_named_plan, cloudflare_authoritative_dns,
+    named_authoritative_dns_error, named_dns_error, named_run_args, public_dns_ready, start_named,
+};
 
 pub struct CloudflareDriver {
     binary: Option<PathBuf>,
     home: Option<PathBuf>,
     named_lock: tokio::sync::Mutex<()>,
     active_hosts: HostClaims,
+    #[cfg(test)]
+    named_dns_authoritative: Option<bool>,
+    #[cfg(test)]
+    named_dns_ready: Option<bool>,
 }
 
 impl CloudflareDriver {
@@ -48,6 +59,10 @@ impl CloudflareDriver {
             home: cloudflare_home(),
             named_lock: tokio::sync::Mutex::new(()),
             active_hosts: HostClaims::default(),
+            #[cfg(test)]
+            named_dns_authoritative: None,
+            #[cfg(test)]
+            named_dns_ready: None,
         }
     }
 
@@ -58,6 +73,8 @@ impl CloudflareDriver {
             home: cloudflare_home(),
             named_lock: tokio::sync::Mutex::new(()),
             active_hosts: HostClaims::default(),
+            named_dns_authoritative: Some(true),
+            named_dns_ready: Some(true),
         }
     }
 
@@ -68,7 +85,21 @@ impl CloudflareDriver {
             home: Some(home),
             named_lock: tokio::sync::Mutex::new(()),
             active_hosts: HostClaims::default(),
+            named_dns_authoritative: Some(true),
+            named_dns_ready: Some(true),
         }
+    }
+
+    #[cfg(test)]
+    const fn with_named_dns_authoritative(mut self, authoritative: bool) -> Self {
+        self.named_dns_authoritative = Some(authoritative);
+        self
+    }
+
+    #[cfg(test)]
+    const fn with_named_dns_ready(mut self, ready: bool) -> Self {
+        self.named_dns_ready = Some(ready);
+        self
     }
 
     fn claim_host(&self, host: &str) -> Result<HostClaim<'_>, DriverError> {
@@ -110,59 +141,6 @@ impl CloudflareDriver {
         }
     }
 
-    async fn run_quick(
-        &self,
-        target: ResolvedTarget,
-        events: mpsc::Sender<DriverEvent>,
-        stop: CancellationToken,
-    ) -> Result<(), DriverError> {
-        let binary =
-            self.binary.clone().ok_or_else(|| DriverError::Unavailable(INSTALL_HINT.to_owned()))?;
-        let mut backoff = INITIAL_BACKOFF;
-        loop {
-            match start_quick(binary.clone(), target, &events).await {
-                Ok((process, url)) => {
-                    backoff = INITIAL_BACKOFF;
-                    events
-                        .send(DriverEvent::Ready {
-                            urls: vec![url],
-                            bind_id: None,
-                            reservation: None,
-                        })
-                        .await
-                        .map_err(|_| DriverError::Cancelled)?;
-                    tokio::select! {
-                        () = stop.cancelled() => {
-                            process.terminate().await?;
-                            let _closed = events.send(DriverEvent::Closed).await;
-                            return Ok(());
-                        }
-                        result = process.wait() => {
-                            let _status = result?;
-                        }
-                    }
-                }
-                Err(error) => {
-                    let _log = events
-                        .send(DriverEvent::Log(tracing::Level::WARN, error.to_string()))
-                        .await;
-                }
-            }
-            let _status = events
-                .send(DriverEvent::StatusChanged(crate::model::EndpointStatus::Reconnecting))
-                .await;
-            let jitter = rand::rng().random_range(0..=backoff.as_millis() as u64);
-            tokio::select! {
-                () = stop.cancelled() => {
-                    let _closed = events.send(DriverEvent::Closed).await;
-                    return Ok(());
-                }
-                () = tokio::time::sleep(Duration::from_millis(jitter)) => {}
-            }
-            backoff = backoff.saturating_mul(2).min(MAX_BACKOFF);
-        }
-    }
-
     async fn prepare_named(
         &self,
         spec: &EndpointSpec,
@@ -175,50 +153,19 @@ impl CloudflareDriver {
         })?;
         ensure_named_login(home)?;
         let host = spec.host.as_ref().expect("validated named host");
-        let name = deterministic_name(host);
-        let owned = route_is_owned(home, &name, host);
-        let overwrite = if owned { " --overwrite-dns" } else { "" };
-        events
-            .send(DriverEvent::Log(
-                tracing::Level::INFO,
-                format!(
-                    "cloudflared plan: tunnel create {name}; tunnel route dns{overwrite} {name} {host}; service=http://{}; catch-all=http_status:404",
-                    target.0
-                ),
-            ))
-            .await
-            .map_err(|_| DriverError::Cancelled)?;
-        let tunnel_id = self.ensure_tunnel(&name).await?;
-        let mut route_args = vec!["tunnel".to_owned(), "route".to_owned(), "dns".to_owned()];
-        if owned {
-            route_args.push("--overwrite-dns".to_owned());
-        }
-        route_args.extend([name.clone(), host.clone()]);
-        let route = self.command(&route_args).await?;
-        if !route.success {
-            return Err(command_error("cloudflared tunnel route dns", &route));
-        }
-        record_route(home, &name, &tunnel_id, host, target)?;
+        let route = self.prepare_named_route(home, host, target, events).await?;
         let (metrics_port, reservation) = reserve_port(20_000..=29_999)
             .map_err(|error| DriverError::Transport(error.to_string()))?;
-        let config = named_config(home, &tunnel_id, host, target, metrics_port);
-        let config_path = std::env::temp_dir().join(format!("{name}-{}.yml", uuid::Uuid::now_v7()));
+        let config = named_config(home, &route.tunnel_id, host, target, metrics_port);
+        let config_path =
+            std::env::temp_dir().join(format!("{}-{}.yml", route.name, uuid::Uuid::now_v7()));
         std::fs::write(&config_path, config)
             .map_err(|error| DriverError::Transport(error.to_string()))?;
-        let args = vec![
-            "tunnel".to_owned(),
-            "--no-autoupdate".to_owned(),
-            "--logformat".to_owned(),
-            "json".to_owned(),
-            "--config".to_owned(),
-            config_path.to_string_lossy().into_owned(),
-            "run".to_owned(),
-            name.clone(),
-        ];
+        let args = named_run_args(&route.name, &config_path);
         let _log = events
             .send(DriverEvent::Log(
                 tracing::Level::INFO,
-                format!("cloudflared tunnel={name} dns={host}"),
+                format!("cloudflared tunnel={} dns={host}", route.name),
             ))
             .await;
         drop(reservation);
@@ -231,6 +178,108 @@ impl CloudflareDriver {
             config_path,
             url: format!("https://{host}"),
         })
+    }
+
+    async fn prepare_named_route(
+        &self,
+        home: &std::path::Path,
+        host: &str,
+        target: ResolvedTarget,
+        events: &mpsc::Sender<DriverEvent>,
+    ) -> Result<NamedRoute, DriverError> {
+        self.ensure_cloudflare_authoritative_dns(host).await?;
+        let name = deterministic_name(host);
+        let owned = route_is_owned(home, &name, host);
+        announce_named_plan(events, &name, host, target, owned).await?;
+        let tunnel = self.ensure_tunnel(&name).await?;
+        let route = self.create_named_route(&name, host, owned).await;
+        if let Err(error) = route {
+            return self.named_setup_failed(home, &name, host, owned, &tunnel, error).await;
+        }
+        record_route(home, &name, &tunnel.id, host, target)?;
+        if let Err(error) = self.ensure_named_dns(host).await {
+            return self.named_setup_failed(home, &name, host, owned, &tunnel, error).await;
+        }
+        Ok(NamedRoute { name, tunnel_id: tunnel.id })
+    }
+
+    async fn create_named_route(
+        &self,
+        name: &str,
+        host: &str,
+        owned: bool,
+    ) -> Result<(), DriverError> {
+        let mut args = vec!["tunnel".to_owned(), "route".to_owned(), "dns".to_owned()];
+        if owned {
+            args.push("--overwrite-dns".to_owned());
+        }
+        args.extend([name.to_owned(), host.to_owned()]);
+        let output = self.command(&args).await?;
+        if output.success {
+            Ok(())
+        } else {
+            Err(command_error("cloudflared tunnel route dns", &output))
+        }
+    }
+
+    async fn ensure_cloudflare_authoritative_dns(&self, host: &str) -> Result<(), DriverError> {
+        #[cfg(test)]
+        if let Some(authoritative) = self.named_dns_authoritative {
+            return authoritative.then_some(()).ok_or_else(|| named_authoritative_dns_error(host));
+        }
+        if cloudflare_authoritative_dns(host).await {
+            Ok(())
+        } else {
+            Err(named_authoritative_dns_error(host))
+        }
+    }
+
+    async fn ensure_named_dns(&self, host: &str) -> Result<(), DriverError> {
+        #[cfg(test)]
+        if let Some(ready) = self.named_dns_ready {
+            return ready.then_some(()).ok_or_else(|| named_dns_error(host));
+        }
+        if public_dns_ready(host.to_owned()).await { Ok(()) } else { Err(named_dns_error(host)) }
+    }
+
+    async fn named_setup_failed(
+        &self,
+        home: &std::path::Path,
+        name: &str,
+        host: &str,
+        owned: bool,
+        tunnel: &NamedTunnel,
+        error: DriverError,
+    ) -> Result<NamedRoute, DriverError> {
+        match self.cleanup_named_setup(home, name, host, owned, tunnel).await {
+            Ok(()) => Err(error),
+            Err(cleanup) => Err(DriverError::Transport(format!(
+                "{error}; Cloudflare named tunnel cleanup failed: {cleanup}"
+            ))),
+        }
+    }
+
+    async fn cleanup_named_setup(
+        &self,
+        home: &std::path::Path,
+        name: &str,
+        host: &str,
+        owned: bool,
+        tunnel: &NamedTunnel,
+    ) -> Result<(), DriverError> {
+        if !owned {
+            forget_route(home, name, host)?;
+        }
+        if !tunnel.created {
+            return Ok(());
+        }
+        let args = strings(["tunnel", "delete", "--force", name]);
+        let deleted = self.command(&args).await?;
+        if !deleted.success {
+            return Err(command_error("cloudflared tunnel delete", &deleted));
+        }
+        let _removed = std::fs::remove_file(home.join(format!("{}.json", tunnel.id)));
+        Ok(())
     }
 
     async fn run_named(
@@ -310,12 +359,12 @@ impl CloudflareDriver {
         forget_route(home, &deterministic_name(host), host)
     }
 
-    async fn ensure_tunnel(&self, name: &str) -> Result<String, DriverError> {
+    async fn ensure_tunnel(&self, name: &str) -> Result<NamedTunnel, DriverError> {
         let created = self.command(&strings3("tunnel", "create", name)).await?;
         if created.success
             && let Some(id) = find_uuid(&format!("{} {}", created.stdout, created.stderr))
         {
-            return Ok(id);
+            return Ok(NamedTunnel { id, created: true });
         }
         let list_args = [
             "tunnel".to_owned(),
@@ -330,7 +379,7 @@ impl CloudflareDriver {
             && let Ok(value) = serde_json::from_str::<Value>(&listed.stdout)
             && let Some(id) = find_json_string(&value, "id")
         {
-            return Ok(id);
+            return Ok(NamedTunnel { id, created: false });
         }
         Err(command_error("cloudflared tunnel create", &created))
     }
@@ -429,55 +478,6 @@ impl TunnelDriver for CloudflareDriver {
             self.run_quick(target, events, stop).await
         }
     }
-}
-
-async fn start_named(
-    binary: PathBuf,
-    args: Vec<String>,
-    metrics_port: u16,
-    events: &mpsc::Sender<DriverEvent>,
-) -> Result<ManagedProcess, DriverError> {
-    let process = ManagedProcess::spawn(&ProcessSpec::new(binary, args))?;
-    forward_logs(process.take_stderr().await, events.clone());
-    if let Err(error) = wait_healthy(Duration::from_secs(10), || ready(metrics_port)).await {
-        process.terminate().await?;
-        return Err(error);
-    }
-    Ok(process)
-}
-
-async fn start_quick(
-    binary: PathBuf,
-    target: ResolvedTarget,
-    events: &mpsc::Sender<DriverEvent>,
-) -> Result<(ManagedProcess, String), DriverError> {
-    let (metrics_port, reservation) =
-        reserve_port(20_000..=29_999).map_err(|error| DriverError::Transport(error.to_string()))?;
-    let args = vec![
-        "tunnel".to_owned(),
-        "--no-autoupdate".to_owned(),
-        "--logformat".to_owned(),
-        "json".to_owned(),
-        "--url".to_owned(),
-        format!("http://{}", target.0),
-        "--metrics".to_owned(),
-        format!("127.0.0.1:{metrics_port}"),
-    ];
-    drop(reservation);
-    let process = ManagedProcess::spawn(&ProcessSpec::new(binary, args))?;
-    let mut stderr = process.take_stderr().await;
-    let url = discover_quick_url(metrics_port, &mut stderr, events).await?;
-    wait_healthy(Duration::from_secs(10), || ready(metrics_port)).await?;
-    forward_logs(stderr, events.clone());
-    Ok((process, url))
-}
-
-struct NamedConnector {
-    binary: PathBuf,
-    args: Vec<String>,
-    metrics_port: u16,
-    config_path: PathBuf,
-    url: String,
 }
 
 #[cfg(test)]

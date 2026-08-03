@@ -35,7 +35,7 @@ impl CloudflareApi {
         let labels = domain.split('.').collect::<Vec<_>>();
         for offset in 0..labels.len().saturating_sub(1) {
             let candidate = labels[offset..].join(".");
-            let path = format!("/zones?name={candidate}&status=active&per_page=1");
+            let path = format!("/zones?name={candidate}&status=active&per_page=5");
             let zones: Vec<ZoneResponse> = self.get(&path).await?;
             if let Some(zone) = zones.into_iter().next() {
                 return Ok(Zone { id: zone.id, name: zone.name });

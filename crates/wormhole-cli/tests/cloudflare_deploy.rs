@@ -112,6 +112,11 @@ async fn first_deploy_keeps_credentials_out_of_arguments_and_output() {
     assert_eq!(fs::metadata(token_file).expect("metadata").mode() & 0o077, 0);
     let calls = requests.lock().expect("requests");
     assert!(calls.iter().any(|call| call == "GET /health"));
+    assert!(
+        calls.iter().any(|call| {
+            call == "GET /client/v4/zones?name=example.com&status=active&per_page=5"
+        })
+    );
     assert_eq!(
         calls
             .iter()
@@ -312,7 +317,9 @@ async fn mock_cloudflare(
 ) -> Response<Body> {
     let method = request.method().clone();
     let path = request.uri().path().to_owned();
-    calls.lock().expect("calls").push(format!("{method} {path}"));
+    let path_and_query =
+        request.uri().path_and_query().map_or_else(|| path.clone(), ToString::to_string);
+    calls.lock().expect("calls").push(format!("{method} {path_and_query}"));
     let mut status = 200;
     let body = match (method.as_str(), path.as_str()) {
         ("GET", "/client/v4/zones") => {

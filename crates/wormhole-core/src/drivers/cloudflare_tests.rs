@@ -48,6 +48,8 @@ if '--version' in sys.argv:
   print('broken installation',file=sys.stderr); sys.exit(2)
  print('cloudflared version fake')
  sys.exit(0)
+if '--logformat' in sys.argv:
+ print('flag provided but not defined: -logformat',file=sys.stderr); sys.exit(2)
 if 'create' in sys.argv:
  if 'tunnelfail' in sys.argv[0]:
   print('create denied',file=sys.stderr); sys.exit(2)
@@ -59,6 +61,8 @@ if 'list' in sys.argv:
  print('[{"id":"018f47b4-0daf-7f89-8c42-177f615251bb"}]')
  sys.exit(0)
 if 'route' in sys.argv:
+ sys.exit(0)
+if 'delete' in sys.argv:
  sys.exit(0)
 if '--metrics' in sys.argv:
  metrics=sys.argv[sys.argv.index('--metrics')+1]
@@ -87,7 +91,8 @@ http.server.HTTPServer(('127.0.0.1',port),Handler).serve_forever()
 #[tokio::test]
 async fn quick_mode_discovers_matching_metric_and_log_url() {
     let directory = tempfile::tempdir().expect("tempdir");
-    let driver = Arc::new(CloudflareDriver::with_binary(fake_cloudflared(&directory)));
+    let binary = fake_cloudflared(&directory);
+    let driver = Arc::new(CloudflareDriver::with_binary(binary.clone()));
     assert_eq!(driver.check().await, DriverHealth::Healthy);
     let (events, mut receiver) = mpsc::channel(32);
     let stop = CancellationToken::new();
@@ -115,6 +120,9 @@ async fn quick_mode_discovers_matching_metric_and_log_url() {
     assert_eq!(ready.as_deref(), Some("https://fixture.trycloudflare.com"));
     stop.cancel();
     task.await.expect("join").expect("driver");
+    let log = fs::read_to_string(format!("{}.log", binary.display())).expect("command log");
+    assert!(log.contains("tunnel --no-autoupdate --output json --url"));
+    assert!(!log.contains("--logformat"));
 }
 
 #[tokio::test]
@@ -184,6 +192,69 @@ async fn named_mode_creates_distinct_tunnel_and_dns_commands() {
     assert!(log.contains(&format!("tunnel create {second}")));
     assert_eq!(log.matches(&format!("route dns {first} one.example.com")).count(), 1);
     assert_eq!(log.matches(&format!("route dns {second} two.example.com")).count(), 1);
+}
+
+#[tokio::test]
+async fn named_mode_rejects_non_cloudflare_dns_before_mutation() {
+    let directory = tempfile::tempdir().expect("tempdir");
+    let binary = fake_cloudflared(&directory);
+    let home = directory.path().join("cloudflare-home");
+    fs::create_dir(&home).expect("home");
+    fs::write(home.join("cert.pem"), "fixture").expect("cert");
+    let driver = CloudflareDriver::with_binary_and_home(binary.clone(), home)
+        .with_named_dns_authoritative(false);
+    let mut endpoint = spec(Some("named"), Persistence::Persistent);
+    endpoint.host = Some("calometer.wormhole.dev".to_owned());
+    let (events, _received) = mpsc::channel(8);
+
+    let error = driver
+        .run(
+            endpoint,
+            ResolvedTarget("127.0.0.1:3000".parse().expect("target")),
+            events,
+            CancellationToken::new(),
+        )
+        .await
+        .expect_err("non-Cloudflare DNS");
+
+    assert!(error.to_string().contains("not under Cloudflare-authoritative DNS"));
+    let log = fs::read_to_string(format!("{}.log", binary.display())).expect("command log");
+    assert!(!log.contains("tunnel create"));
+    assert!(!log.contains("route dns"));
+}
+
+#[tokio::test]
+async fn named_mode_rejects_unresolvable_dns_and_rolls_back_new_tunnel() {
+    let directory = tempfile::tempdir().expect("tempdir");
+    let binary = fake_cloudflared(&directory);
+    let home = directory.path().join("cloudflare-home");
+    fs::create_dir(&home).expect("home");
+    fs::write(home.join("cert.pem"), "fixture").expect("cert");
+    let driver = CloudflareDriver::with_binary_and_home(binary.clone(), home.clone())
+        .with_named_dns_ready(false);
+    let host = "unresolvable.example.com";
+    let mut endpoint = spec(Some("named"), Persistence::Persistent);
+    endpoint.host = Some(host.to_owned());
+    let (events, mut received) = mpsc::channel(8);
+
+    let error = driver
+        .run(
+            endpoint,
+            ResolvedTarget("127.0.0.1:3000".parse().expect("target")),
+            events,
+            CancellationToken::new(),
+        )
+        .await
+        .expect_err("unresolvable DNS");
+
+    assert!(error.to_string().contains("not publicly resolvable after route creation"));
+    let name = deterministic_name(host);
+    assert!(!super::route_is_owned(&home, &name, host));
+    let log = fs::read_to_string(format!("{}.log", binary.display())).expect("command log");
+    assert!(log.contains(&format!("tunnel delete --force {name}")));
+    while let Ok(event) = received.try_recv() {
+        assert!(!matches!(event, DriverEvent::Ready { .. }));
+    }
 }
 
 #[test]
@@ -299,10 +370,9 @@ async fn named_diagnostics_and_tunnel_lookup_surface_actionable_failures() {
         [(base, DriverHealth::Healthy), (named, DriverHealth::Degraded(_))]
             if base == "cloudflare" && named == "cloudflare:named"
     ));
-    assert_eq!(
-        fallback.ensure_tunnel("fixture").await.expect("listed tunnel"),
-        "018f47b4-0daf-7f89-8c42-177f615251bb"
-    );
+    let listed = fallback.ensure_tunnel("fixture").await.expect("listed tunnel");
+    assert_eq!(listed.id, "018f47b4-0daf-7f89-8c42-177f615251bb");
+    assert!(!listed.created);
 
     let failing = CloudflareDriver::with_binary_and_home(
         fake_cloudflared_named(&directory, "cloudflared-tunnelfail"),
@@ -319,6 +389,8 @@ async fn unavailable_command_and_missing_home_diagnostics_are_actionable() {
         home: None,
         named_lock: tokio::sync::Mutex::new(()),
         active_hosts: super::HostClaims::default(),
+        named_dns_authoritative: Some(true),
+        named_dns_ready: Some(true),
     };
     assert!(matches!(
         unavailable.check().await,
@@ -336,6 +408,8 @@ async fn unavailable_command_and_missing_home_diagnostics_are_actionable() {
         home: None,
         named_lock: tokio::sync::Mutex::new(()),
         active_hosts: super::HostClaims::default(),
+        named_dns_authoritative: Some(true),
+        named_dns_ready: Some(true),
     };
     let diagnostics = healthy_without_home.diagnostics().await;
     assert_eq!(healthy_without_home.capabilities(), crate::driver::DriverCapabilities::default());
