@@ -7,6 +7,8 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-08-03
+
 ### Added
 
 - Self-hosted QUIC relay with authenticated WebSocket fallback.
@@ -22,3 +24,4 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   Unix-socket administration, secure state permissions, and provider ownership checks.
 
 [Unreleased]: https://github.com/nikuscs/wormhole/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/nikuscs/wormhole/releases/tag/v0.1.0
