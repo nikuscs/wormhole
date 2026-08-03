@@ -17,8 +17,11 @@ Install and authenticate:
 - Docker Desktop with `linux/arm64` and `linux/amd64` container support;
 - Node.js 24 and npm;
 - Xcode command-line tools, including `codesign` and `notarytool`;
-- `jq`, `gh`, and `shellcheck`; and
+- `jq`, `gh`, and `shellcheck`;
+- a clean, synchronized `nikuscs/homebrew-tap` checkout at `~/projects/homebrew-tap`; and
 - the dependencies required by the complete `make signoff` gate.
+
+Set `WORMHOLE_HOMEBREW_TAP` when the tap checkout lives elsewhere.
 
 Import a `Developer ID Application` certificate and its private key into an isolated local
 keychain. Do not add the release keychain to the user keychain search list. Unlock it and point the
@@ -61,6 +64,8 @@ source being built, runs the repository gate, and produces:
 - `wormhole` and `wormholed` ZIP archives for Linux arm64 and x86_64, built in matching Docker
   containers;
 - shell and Homebrew installers;
+- an inspectable `release-notes.md` generated from the versioned changelog section;
+- the `wormhole.rb` formula generated from the final platform checksums;
 - the source archive and checksums;
 - `wormholed-bootstrap.sh`; and
 - `wormholed-cloudflare-worker.tar.gz` and its checksum.
@@ -89,8 +94,9 @@ After confirmation, it:
 1. verifies checksums, signed build state, source commit, branch, and remote state;
 2. fast-forwards `main` to the exact release commit that produced the artifacts;
 3. creates an annotated tag and atomically pushes `main` and the tag;
-4. runs `make signoff` from the clean, pushed release commit; and
-5. creates the GitHub release and uploads all public artifacts.
+4. runs `make signoff` from the clean, pushed release commit;
+5. creates the GitHub release with the generated notes and uploads all public artifacts; and
+6. commits and pushes the generated formula to `nikuscs/homebrew-tap`.
 
 `--yes` suppresses only the final interactive confirmation. It does not bypass any validation.
 

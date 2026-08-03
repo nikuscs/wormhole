@@ -9,6 +9,12 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [0.1.0] - 2026-08-03
 
+### Install
+
+```sh
+brew install nikuscs/tap/wormhole
+```
+
 ### Added
 
 - Self-hosted QUIC relay with authenticated WebSocket fallback.

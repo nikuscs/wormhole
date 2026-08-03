@@ -15,7 +15,8 @@ build creates and validates every release artifact before preserving an unpushed
 release commit under refs/wormhole-release/vX.Y.Z. By default it signs and
 notarizes macOS archives. --unsigned is for build validation only and cannot be
 published. publish fast-forwards main to the exact commit that was built, creates
-and atomically pushes the tag, runs make signoff, and creates the GitHub release.
+and atomically pushes the tag, runs make signoff, creates the GitHub release, and
+updates the Homebrew tap.
 EOF
     exit 2
 }
@@ -243,6 +244,10 @@ build_global_artifacts() {
         npm run build --prefix crates/wormholed-cloudflare
         python3 scripts/package-cloudflare-worker.py \
             --version "$version" --output-dir target/distrib
+        python3 scripts/generate-release-notes.py \
+            --version "$version" --changelog CHANGELOG.md --output target/distrib/release-notes.md
+        python3 scripts/generate-homebrew-formula.py \
+            --version "$version" --artifacts target/distrib --output target/distrib/wormhole.rb
     )
 }
 
@@ -255,7 +260,7 @@ verify_expected_artifacts() {
         done
     done
     for artifact in wormhole-cli-installer.sh wormholed-installer.sh wormhole-cli.rb wormholed.rb \
-        source.tar.gz source.tar.gz.sha256 wormholed-bootstrap.sh \
+        release-notes.md source.tar.gz source.tar.gz.sha256 wormhole.rb wormholed-bootstrap.sh \
         wormholed-cloudflare-worker.tar.gz wormholed-cloudflare-worker.tar.gz.sha256; do
         [[ -f "$distrib/$artifact" ]] || fail "missing artifact: $artifact"
     done
@@ -395,6 +400,26 @@ verify_release_state() {
         || fail "release state is missing, mismatched, or unsigned"
 }
 
+update_homebrew_tap() {
+    local tag=$1 output=$2
+    local tap=${WORMHOLE_HOMEBREW_TAP:-$HOME/projects/homebrew-tap}
+    [[ -d "$tap/.git" ]] || fail "Homebrew tap repository not found: $tap"
+    [[ "$(git -C "$tap" branch --show-current)" == main ]] \
+        || fail "Homebrew tap must be on main"
+    [[ -z "$(git -C "$tap" status --porcelain)" ]] \
+        || fail "Homebrew tap working tree must be clean"
+    git -C "$tap" fetch origin main
+    [[ "$(git -C "$tap" rev-parse HEAD)" == "$(git -C "$tap" rev-parse origin/main)" ]] \
+        || fail "Homebrew tap main must exactly match origin/main"
+    install -m 0644 "$output/wormhole.rb" "$tap/Formula/wormhole.rb"
+    git -C "$tap" diff --check
+    ! git -C "$tap" diff --quiet -- Formula/wormhole.rb \
+        || fail "generated Homebrew formula did not change"
+    git -C "$tap" add Formula/wormhole.rb
+    git -C "$tap" commit -m "Update Wormhole to $tag"
+    git -C "$tap" push origin main
+}
+
 publish_release() {
     [[ $# -ge 1 ]] || usage
     local tag=$1 assume_yes=false
@@ -441,9 +466,12 @@ publish_release() {
     set --
     while IFS= read -r path; do
         set -- "$@" "$path"
-    done < <(find "$output" -maxdepth 1 -type f ! -name '*.json' ! -name '*-dist-manifest*' -print | sort)
+    done < <(find "$output" -maxdepth 1 -type f ! -name '*.json' ! -name '*-dist-manifest*' \
+        ! -name 'release-notes.md' -print | sort)
     [[ $# -gt 0 ]] || fail "no release assets found"
-    gh release create "$tag" --verify-tag --title "Wormhole $tag" --generate-notes "$@"
+    gh release create "$tag" --verify-tag --title "Wormhole $tag" \
+        --notes-file "$output/release-notes.md" "$@"
+    update_homebrew_tap "$tag" "$output"
     git -C "$ROOT" update-ref -d "$ref"
     printf 'published %s\n' "$tag"
 }

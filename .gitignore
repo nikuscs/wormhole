@@ -1,6 +1,8 @@
 target/
 dist/
 node_modules/
+__pycache__/
+*.pyc
 .wrangler/
 /crates/wormholed-cloudflare/build/
 /crates/wormholed-cloudflare/deploy-bundle/

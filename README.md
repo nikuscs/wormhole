@@ -36,11 +36,19 @@
 
 ### Install
 
+With Homebrew:
+
+```console
+brew install nikuscs/tap/wormhole
+```
+
+Or with the standalone installer:
+
 ```console
 curl --proto '=https' --tlsv1.2 -LsSf https://github.com/nikuscs/wormhole/releases/latest/download/wormhole-cli-installer.sh | sh
 ```
 
-Or build and install both binaries from source:
+To build and install both binaries from source:
 
 ```console
 make install
