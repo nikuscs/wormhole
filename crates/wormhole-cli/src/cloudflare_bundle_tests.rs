@@ -9,7 +9,10 @@ fn local_bundle_requires_manifest_config_and_worker_files() {
     fs::create_dir(root.join("build")).expect("build");
     fs::write(
         root.join("manifest.json"),
-        r#"{"schema":1,"wormhole_version":"0.0.0","wrangler_version":"4.115.0"}"#,
+        format!(
+            r#"{{"schema":1,"wormhole_version":"{}","wrangler_version":"4.115.0"}}"#,
+            env!("CARGO_PKG_VERSION")
+        ),
     )
     .expect("manifest");
     fs::write(root.join("wrangler.jsonc"), "{}").expect("config");

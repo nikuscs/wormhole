@@ -268,7 +268,10 @@ fn fixture_bundle(directory: &tempfile::TempDir) -> std::path::PathBuf {
     fs::create_dir_all(bundle.join("build")).expect("bundle");
     fs::write(
         bundle.join("manifest.json"),
-        r#"{"schema":1,"wormhole_version":"0.0.0","wrangler_version":"4.115.0"}"#,
+        format!(
+            r#"{{"schema":1,"wormhole_version":"{}","wrangler_version":"4.115.0"}}"#,
+            env!("CARGO_PKG_VERSION")
+        ),
     )
     .expect("manifest");
     fs::write(bundle.join("wrangler.jsonc"), "{}").expect("config");
