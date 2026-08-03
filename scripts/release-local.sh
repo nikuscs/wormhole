@@ -180,10 +180,14 @@ sign_and_notarize_archive() {
     rm "$archive"
     (cd "$dir" && zip -qry "$archive" .)
     notarytool_args "$profile"
-    xcrun notarytool submit "$archive" "${NOTARYTOOL_ARGS[@]}" --wait
-    while IFS= read -r binary; do
-        spctl --assess --type execute --verbose=2 "$binary"
-    done < <(find "$dir" -type f \( -name wormhole -o -name wormholed \))
+    local submission
+    submission=$(xcrun notarytool submit "$archive" "${NOTARYTOOL_ARGS[@]}" \
+        --wait --output-format json)
+    if ! jq -e '.status == "Accepted"' <<< "$submission" >/dev/null; then
+        printf '%s\n' "$submission" >&2
+        fail "Apple rejected notarization for $(basename "$archive")"
+    fi
+    jq -r '"notarization accepted: \(.id)"' <<< "$submission"
     rm -rf "$dir"
     update_archive_checksum "$archive" "$manifest"
 }
