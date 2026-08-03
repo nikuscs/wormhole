@@ -72,7 +72,7 @@ Prebuilt `wormhole` and `wormholed` binaries are available for:
 - Linux — ARM64 and x86_64
 - Cloudflare Workers — platform-independent deployment bundle
 
-macOS binaries are signed with Developer ID and notarized by Apple. Every artifact includes a SHA-256 checksum.
+macOS binaries are signed with Developer ID and notarized by Apple. Every artifact includes a SHA-256 checksum. Archives also contain the MIT license and generated third-party notices.
 
 ## Verify a download
 

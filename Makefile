@@ -1,7 +1,7 @@
 COVERAGE_TARGET_ROOT ?= $(CURDIR)/target
 LLVM_COV_TARGET_DIR := $(COVERAGE_TARGET_ROOT)/llvm-cov-target
 
-.PHONY: fmt lint check test build install coverage coverage-e2e e2e cloudflare-semantics shell size policy ci signoff
+.PHONY: fmt lint check test build install coverage coverage-e2e e2e cloudflare-semantics shell size notices notices-check policy ci signoff
 
 fmt:
 	cargo fmt --all -- --check
@@ -41,11 +41,21 @@ cloudflare-semantics:
 
 shell:
 	shellcheck scripts/release-local.sh scripts/wormholed-bootstrap.sh scripts/test-wormholed-bootstrap.sh scripts/test-cloudflare-semantics.sh
-	python3 -m py_compile scripts/cloudflare-semantics-server.py scripts/cloudflare-websocket-client.py
+	python3 -m py_compile scripts/add-release-legal-files.py scripts/cloudflare-semantics-server.py scripts/cloudflare-websocket-client.py scripts/generate-homebrew-formula.py scripts/generate-release-notes.py scripts/generate-third-party-notices.py scripts/package-cloudflare-worker.py
 	cargo build -p wormholed --locked
 	WORMHOLE_TEST_REAL_BINARY=target/debug/wormholed scripts/test-wormholed-bootstrap.sh
 
-policy:
+notices:
+	scripts/generate-third-party-notices.py --output THIRD_PARTY_NOTICES
+
+notices-check:
+	@tmp=$$(mktemp); trap 'rm -f "$$tmp"' EXIT; \
+		scripts/generate-third-party-notices.py --output "$$tmp"; \
+		cmp -s THIRD_PARTY_NOTICES "$$tmp" || { \
+			echo "THIRD_PARTY_NOTICES is stale; run make notices" >&2; exit 1; \
+		}
+
+policy: notices-check
 	cargo deny check
 	cargo audit
 

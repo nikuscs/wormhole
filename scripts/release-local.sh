@@ -170,6 +170,27 @@ update_archive_checksum() {
     mv "$manifest.updated" "$manifest"
 }
 
+install_legal_files() {
+    local worktree=$1
+    install -m 0644 "$worktree/LICENSE" "$worktree/target/distrib/LICENSE"
+    install -m 0644 "$worktree/THIRD_PARTY_NOTICES" \
+        "$worktree/target/distrib/THIRD_PARTY_NOTICES"
+}
+
+add_legal_files_to_target_archives() {
+    local worktree=$1 target=$2 archive found=0
+    local manifest="$worktree/target/distrib/${target}-dist-manifest.json"
+    for archive in "$worktree"/target/distrib/*-"$target".zip; do
+        [[ -f "$archive" ]] || continue
+        found=1
+        python3 "$worktree/scripts/add-release-legal-files.py" "$archive" \
+            --license-file "$worktree/LICENSE" \
+            --notices-file "$worktree/THIRD_PARTY_NOTICES"
+        update_archive_checksum "$archive" "$manifest"
+    done
+    [[ "$found" == 1 ]] || fail "no archives found for $target"
+}
+
 sign_and_notarize_archive() {
     local archive=$1 manifest=$2 profile=$3 dir binary
     dir=$(mktemp -d)
@@ -239,6 +260,10 @@ build_global_artifacts() {
         dist build --tag="$tag" --force-tag --artifacts=global --output-format=json \
             > global-dist-manifest.pending.json
         mv global-dist-manifest.pending.json target/distrib/global-dist-manifest.json
+        python3 scripts/add-release-legal-files.py target/distrib/source.tar.gz \
+            --license-file LICENSE --notices-file THIRD_PARTY_NOTICES
+        update_archive_checksum target/distrib/source.tar.gz \
+            target/distrib/global-dist-manifest.json
         install -m 0755 scripts/wormholed-bootstrap.sh target/distrib/wormholed-bootstrap.sh
         npm ci --prefix crates/wormholed-cloudflare
         npm run build --prefix crates/wormholed-cloudflare
@@ -259,11 +284,32 @@ verify_expected_artifacts() {
             [[ -f "$distrib/$app-$target.zip.sha256" ]] || fail "missing checksum: $app-$target.zip.sha256"
         done
     done
-    for artifact in wormhole-cli-installer.sh wormholed-installer.sh wormhole-cli.rb wormholed.rb \
-        release-notes.md source.tar.gz source.tar.gz.sha256 wormhole.rb wormholed-bootstrap.sh \
-        wormholed-cloudflare-worker.tar.gz wormholed-cloudflare-worker.tar.gz.sha256; do
+    for artifact in LICENSE THIRD_PARTY_NOTICES wormhole-cli-installer.sh wormholed-installer.sh \
+        wormhole-cli.rb wormholed.rb release-notes.md source.tar.gz source.tar.gz.sha256 \
+        wormhole.rb wormholed-bootstrap.sh wormholed-cloudflare-worker.tar.gz \
+        wormholed-cloudflare-worker.tar.gz.sha256; do
         [[ -f "$distrib/$artifact" ]] || fail "missing artifact: $artifact"
     done
+    python3 - "$distrib" <<'PY'
+import sys
+import tarfile
+import zipfile
+from pathlib import Path
+
+root = Path(sys.argv[1])
+required = {"LICENSE", "THIRD_PARTY_NOTICES"}
+for archive in root.glob("*.zip"):
+    with zipfile.ZipFile(archive) as bundle:
+        missing = required - set(bundle.namelist())
+    if missing:
+        raise SystemExit(f"{archive.name} is missing legal files: {sorted(missing)}")
+for name in ("source.tar.gz", "wormholed-cloudflare-worker.tar.gz"):
+    with tarfile.open(root / name, "r:gz") as bundle:
+        entries = {entry.name for entry in bundle.getmembers()}
+    missing = {item for item in required if not any(entry.endswith(f"/{item}") or entry == item for entry in entries)}
+    if missing:
+        raise SystemExit(f"{name} is missing legal files: {sorted(missing)}")
+PY
     local checksum
     for checksum in "$distrib"/*.sha256; do
         (cd "$distrib" && shasum -a 256 -c "$(basename "$checksum")")
@@ -319,6 +365,7 @@ build_release() {
     require_command npm
     require_command python3
     require_command rustup
+    require_command zip
     require_clean_main
     require_synced_main
 
@@ -364,11 +411,14 @@ build_release() {
     if [[ "$skip_gate" == false ]]; then
         run_gate "$worktree"
     fi
+    make -C "$worktree" notices-check
     install_build_targets
     mkdir -p "$worktree/target/distrib"
+    install_legal_files "$worktree"
     local target
     for target in "${MAC_TARGETS[@]}"; do
         build_macos_target "$worktree" "$tag" "$target"
+        add_legal_files_to_target_archives "$worktree" "$target"
         if [[ "$unsigned" == false ]]; then
             sign_macos_target "$worktree" "$target" "$profile"
         fi
@@ -377,6 +427,7 @@ build_release() {
     git_common=$(cd "$(git -C "$ROOT" rev-parse --git-common-dir)" && pwd)
     for target in "${LINUX_TARGETS[@]}"; do
         build_linux_target "$worktree" "$tag" "$target" "$git_common"
+        add_legal_files_to_target_archives "$worktree" "$target"
     done
     build_global_artifacts "$worktree" "$tag" "$version"
     verify_expected_artifacts "$worktree/target/distrib"

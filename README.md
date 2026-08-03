@@ -316,6 +316,12 @@ uses the daemon bearer token. Remote onboarding is available through `GET /v1/re
 - [Local releases](docs/RELEASING.md)
 - [Wire protocol](docs/PROTOCOL.md)
 
+## License
+
+Wormhole is [MIT licensed](LICENSE). Release archives and container images include the license and
+generated [third-party notices](THIRD_PARTY_NOTICES). Cloudflare and Tailscale tools are separate products
+subject to their own licenses and terms; Wormhole is not affiliated with either company.
+
 ## Development
 
 Requires Rust 1.97+.

@@ -13,13 +13,18 @@ from pathlib import Path
 
 
 def parse_args() -> argparse.Namespace:
+    root = Path(__file__).resolve().parents[1]
     parser = argparse.ArgumentParser()
     parser.add_argument("--version", required=True)
     parser.add_argument("--output-dir", required=True, type=Path)
     parser.add_argument(
         "--crate-dir",
         type=Path,
-        default=Path(__file__).resolve().parents[1] / "crates/wormholed-cloudflare",
+        default=root / "crates/wormholed-cloudflare",
+    )
+    parser.add_argument("--license-file", type=Path, default=root / "LICENSE")
+    parser.add_argument(
+        "--notices-file", type=Path, default=root / "THIRD_PARTY_NOTICES"
     )
     return parser.parse_args()
 
@@ -62,6 +67,8 @@ def main() -> None:
     for relative in ["index.js", "index_bg.wasm", "package.json"]:
         shutil.copy2(crate / "build" / relative, staging / "build" / relative)
     shutil.copy2(crate / "build/worker/shim.mjs", staging / "build/worker/shim.mjs")
+    shutil.copy2(args.license_file, staging / "LICENSE")
+    shutil.copy2(args.notices_file, staging / "THIRD_PARTY_NOTICES")
 
     output.mkdir(parents=True, exist_ok=True)
     asset = output / "wormholed-cloudflare-worker.tar.gz"

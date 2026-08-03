@@ -63,6 +63,7 @@ source being built, runs the repository gate, and produces:
 - signed and notarized macOS executables;
 - `wormhole` and `wormholed` ZIP archives for Linux arm64 and x86_64, built in matching Docker
   containers;
+- `LICENSE` and generated `THIRD_PARTY_NOTICES` files inside every archive and as release assets;
 - shell and Homebrew installers;
 - an inspectable `release-notes.md` generated from the versioned changelog section;
 - the `wormhole.rb` formula generated from the final platform checksums;
@@ -71,7 +72,8 @@ source being built, runs the repository gate, and produces:
 - `wormholed-cloudflare-worker.tar.gz` and its checksum.
 
 Artifacts and build state are written under `target/release-local/vX.Y.Z/`. The exact unpushed
-release commit is preserved under `refs/wormhole-release/vX.Y.Z`.
+release commit is preserved under `refs/wormhole-release/vX.Y.Z`. After dependency changes, run
+`make notices`; the policy gate rejects a stale `THIRD_PARTY_NOTICES` file.
 
 For toolchain validation without Apple signing or the full gate:
 

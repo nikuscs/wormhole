@@ -9,6 +9,8 @@ RUN cargo build --release --locked -p wormholed \
 
 FROM gcr.io/distroless/static-debian12:nonroot
 COPY --from=builder /src/target/release/wormholed /usr/local/bin/wormholed
+COPY --from=builder /src/LICENSE /usr/share/licenses/wormhole/LICENSE
+COPY --from=builder /src/THIRD_PARTY_NOTICES /usr/share/licenses/wormhole/THIRD_PARTY_NOTICES
 COPY --from=builder --chown=65532:65532 /image/var/lib/wormhole /var/lib/wormhole
 VOLUME ["/etc/wormhole", "/var/lib/wormhole"]
 EXPOSE 80/tcp 443/tcp 443/udp 10000-20000/tcp

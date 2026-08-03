@@ -52,6 +52,7 @@ def render(version: str, artifacts: Path) -> str:
 
   def install
     bin.install "wormhole"
+    doc.install "LICENSE", "THIRD_PARTY_NOTICES"
   end
 
   test do
