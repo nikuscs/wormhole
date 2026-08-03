@@ -381,6 +381,7 @@ only by the add request and are never returned or persisted.
 
 - [Optional macOS menu-bar companion](apps/macos/README.md)
 - [Server deployment](docs/DEPLOY.md)
+- [Local releases](docs/RELEASING.md)
 - [Wire protocol](docs/PROTOCOL.md)
 
 ---

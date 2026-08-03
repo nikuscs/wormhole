@@ -40,7 +40,7 @@ cloudflare-semantics:
 	scripts/test-cloudflare-semantics.sh "$(CF_REMOTE)" "$(CF_DOMAIN)"
 
 shell:
-	shellcheck scripts/wormholed-bootstrap.sh scripts/test-wormholed-bootstrap.sh scripts/test-cloudflare-semantics.sh
+	shellcheck scripts/release-local.sh scripts/wormholed-bootstrap.sh scripts/test-wormholed-bootstrap.sh scripts/test-cloudflare-semantics.sh
 	python3 -m py_compile scripts/cloudflare-semantics-server.py scripts/cloudflare-websocket-client.py
 	cargo build -p wormholed --locked
 	WORMHOLE_TEST_REAL_BINARY=target/debug/wormholed scripts/test-wormholed-bootstrap.sh
