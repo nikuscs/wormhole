@@ -16,71 +16,60 @@
   <img src="https://img.shields.io/badge/license-MIT-blue?style=flat-square" alt="MIT license">
 </p>
 
----
+## Start in 2 minutes
 
-## Features
+### 1. Install
 
-- **One command, multiple providers** — Publish through Wormhole, Tailscale, and Cloudflare
-- **Stable worktree URLs** — Keep provider URLs while local app ports change
-- **Self-hosted relays** — Run the full VPS relay or an HTTP/WebSocket relay on Cloudflare Workers
-- **Provider-only mode** — Use Tailscale or Cloudflare without a Wormhole relay
-- **Process supervision** — Allocate `PORT`, start a child process, detect its listener, and clean up
-- **Declarative projects** — Start multiple worktree services from `wormhole.toml`
-- **Request inspection and replay** — Capture traffic through the local CLI and API
-- **Durable webhooks** — Buffer requests while a target is offline and replay them later
-- **Agent-friendly interfaces** — Deterministic JSON, local Unix sockets, and no required web UI
-
----
-
-## Quick start
-
-### Install
-
-With Homebrew:
+Homebrew adds `nikuscs/tap` automatically. Wormhole is a formula; the unrelated `wormhole` cask is
+not this project.
 
 ```console
 brew install nikuscs/tap/wormhole
 ```
 
-Or with the standalone installer:
+Update or remove it:
+
+```console
+brew upgrade wormhole
+brew uninstall wormhole
+```
+
+Standalone installer:
 
 ```console
 curl --proto '=https' --tlsv1.2 -LsSf https://github.com/nikuscs/wormhole/releases/latest/download/wormhole-cli-installer.sh | sh
 ```
 
-To build and install both binaries from source:
+Build both binaries from source:
 
 ```console
 make install
 ```
 
-### Install the agent skill
-
-Teach compatible coding agents the shortest safe Wormhole workflows:
+### 2. Install the agent skill
 
 ```console
 npx skills add nikuscs/wormhole --skill wormhole-cli
 ```
 
-Add `--global` to make it available across projects. Update a project or global installation with:
+Use `--global` for all projects. Update either installation with:
 
 ```console
 npx skills update wormhole-cli
 npx skills update wormhole-cli --global
 ```
 
-The skill supports Claude Code, Codex, Cursor, GitHub Copilot, Pi, and other agents compatible with
-the open Agent Skills format.
+Works with Claude Code, Codex, Cursor, GitHub Copilot, Pi, and other Agent Skills clients.
 
-### Connect to a relay
+### 3. Connect to a relay
 
-Create or display the client identity:
+Show or create this machine's identity:
 
 ```console
 wormhole key show
 ```
 
-Create an enrollment invite on the relay, then redeem it from the client:
+Create an invite on the relay, then add it on the client:
 
 ```console
 # On the relay server (single use, 10-minute default expiry):
@@ -91,52 +80,68 @@ wormhole remote add myvps tun.example.com:443 --invite <token>
 wormhole domains
 ```
 
-Run `wormhole remote add` without positional arguments on an interactive terminal to use the setup
-wizard. Scripts and JSON/non-TTY calls must provide `NAME`, `ADDR`, and any invite explicitly. For
-multiple independently keyed machines, create a reusable credential with
-`wormholed invite create --name personal-devices --reusable`; inspect or revoke it with
-`wormholed invite ls` and `wormholed invite revoke <invite-id>`. Invite tokens are shown once,
-stored only as digests by the relay, and never written to client configuration. Manual
-`wormholed key authorize "<public-key>" --name laptop` remains available as a break-glass flow.
+Run `wormhole remote add` alone for the interactive wizard. Scripts must pass `NAME`, `ADDR`, and
+the invite. Useful relay commands:
 
-The first added relay becomes the default. Wormhole authenticates with the local identity key and
-uses QUIC with an automatic secure WebSocket fallback. `wormhole domains` connects to every
-configured relay and lists the public domains each one advertises.
+- Reusable invite: `wormholed invite create --name personal-devices --reusable`
+- Inspect invites: `wormholed invite ls`
+- Revoke one: `wormholed invite revoke <invite-id>`
+- Break-glass authorization: `wormholed key authorize "<public-key>" --name laptop`
 
-Client configuration is stored in `~/.config/wormhole/config.toml`; `WORMHOLE_CONFIG` and
-`--config PATH` override it. Client identity keys live under `~/.config/wormhole/keys/`.
+Invites are shown once and stored only as digests. The first relay becomes the default;
+`wormhole domains` lists its public domains. Control uses QUIC with secure WebSocket fallback.
+Config lives at `~/.config/wormhole/config.toml`; keys live at
+`~/.config/wormhole/keys/`. Override config with `WORMHOLE_CONFIG` or `--config PATH`.
 
-### Expose a local service
+### 4. Expose something
+
+Existing service:
 
 ```console
 wormhole http 3000
 ```
 
-Wormhole prints a URL such as `https://misty-otter-3f2a.tun.example.com`.
+Example result: `https://misty-otter-3f2a.tun.example.com`.
 
-### Run a development process
+Development command:
 
 ```console
 wormhole run -- bun run dev
 ```
 
-`wormhole run` allocates and injects `PORT`, detects the child listener, publishes it, and removes
-temporary provider state when the process exits. Temporary endpoints served by a Wormhole relay
-also override `X-Robots-Tag` with `noindex, nofollow, noarchive, nosnippet`; persistent endpoints
-preserve the origin's indexing policy. This discourages search indexing but is not access control.
-Frameworks that ignore `PORT`—including Vite, Astro, Angular, React Router, Rsbuild, Expo, and
-React Native—receive compatible `--port` and `--host` flags automatically, including through common
-package runners and `package.json` scripts.
-Explicit flags always win, and listener detection remains the fallback.
+`wormhole run` sets `PORT`, starts the child, detects its listener, exposes it, and cleans up on exit.
+It supplies compatible `--port` and `--host` flags for common frameworks; explicit flags win.
+Temporary relay endpoints set `X-Robots-Tag` to `noindex, nofollow, noarchive, nosnippet`. This is
+not access control.
 
-#### Framework development-host allowlists
+Declarative worktree project:
 
-Vite receives the public hostname automatically through its supported
-`__VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS` environment variable.
+```console
+wormhole up
+```
 
-Next.js blocks tunneled access to development-only assets unless the public hostname appears in
-`allowedDevOrigins`. Next.js has no native environment variable or CLI flag for this setting, but
-`next.config.js` can derive it from the `WORMHOLE_URL` that `wormhole run` injects:
+This starts the current worktree's `wormhole.toml` services.
+
+## Provider commands
+
+A Wormhole relay is optional for Tailscale and Cloudflare:
+
+```console
+wormhole http 3000 --endpoint tailscale
+wormhole http 3000 --endpoint tailscale:funnel
+wormhole http 3000 --endpoint cloudflare:quick
+wormhole http 3000 --endpoint cloudflare:named --host app.example.com --persist
+wormhole http 3000 --endpoint wormhole --endpoint tailscale --endpoint cloudflare
+```
+
+Tailscale uses the local `tailscaled` login. Cloudflare quick tunnels need no login; named tunnels
+use `cloudflared tunnel login`.
+
+## Framework allowlists
+
+Vite receives the public host through `__VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS`.
+
+For Next.js, derive `allowedDevOrigins` in `next.config.js` from the injected `WORMHOLE_URL`:
 
 ```js
 const wormholeHost = process.env.WORMHOLE_URL
@@ -149,8 +154,7 @@ module.exports = {
 }
 ```
 
-This follows each worktree's generated hostname without per-worktree edits. For a dedicated static
-Wormhole namespace, a single wildcard also works for every worktree:
+Or allow a dedicated static namespace:
 
 ```js
 module.exports = {
@@ -158,41 +162,13 @@ module.exports = {
 }
 ```
 
-Use only a namespace dedicated to Wormhole previews, and merge either form with existing
-`allowedDevOrigins` entries. See the [Next.js `allowedDevOrigins` documentation](https://nextjs.org/docs/app/api-reference/config/next-config-js/allowedDevOrigins).
-
-### Start a worktree project
-
-```console
-wormhole up
-```
-
-`wormhole up` starts the services declared by the current worktree's `wormhole.toml`.
-
----
-
-## Use providers directly
-
-A Wormhole relay is optional when using Tailscale or Cloudflare:
-
-```console
-wormhole http 3000 --endpoint tailscale
-wormhole http 3000 --endpoint tailscale:funnel
-wormhole http 3000 --endpoint cloudflare:quick
-wormhole http 3000 --endpoint cloudflare:named --host app.example.com --persist
-wormhole http 3000 --endpoint wormhole --endpoint tailscale --endpoint cloudflare
-```
-
-Tailscale uses the local `tailscaled` login. Cloudflare quick tunnels require no login; named
-tunnels use credentials created by `cloudflared tunnel login`.
-
----
+Merge with existing entries. Use only a Wormhole preview namespace. See the
+[Next.js documentation](https://nextjs.org/docs/app/api-reference/config/next-config-js/allowedDevOrigins).
 
 ## Stable worktree URLs
 
-Stable worktree identities are automatic and require no `wormhole.toml`. Wormhole derives a label
-from the current directory's `package.json` name (falling back to the directory), service name, and
-Git branch:
+Stable identities require no config. Wormhole derives them from the `package.json` name (or
+folder), service, and Git branch:
 
 ```json
 {
@@ -203,8 +179,7 @@ Git branch:
 }
 ```
 
-These anonymous examples illustrate the naming rules. `tun.example.com` stands in for the domain
-advertised by your relay:
+`tun.example.com` below represents your relay domain:
 
 | Checkout/worktree | Command | Generated URL |
 | --- | --- | --- |
@@ -212,21 +187,18 @@ advertised by your relay:
 | Dashboard `feat/theme-editor` | `wormhole run -- bun run dev` | `https://dashboard-feat-theme-editor.tun.example.com` |
 | Dashboard `fix/mobile-nav` | `wormhole http 3000` | `https://dashboard-fix-mobile-nav.tun.example.com` |
 | Docs site `main` | `wormhole run -- npm run dev` | `https://docs-site.tun.example.com` |
-| Rust API `feat/health-check` (no `package.json`) | `wormhole run -- cargo run` | `https://rust-api-feat-health-check.tun.example.com` |
+| Rust API `feat/health-check` | `wormhole run -- cargo run` | `https://rust-api-feat-health-check.tun.example.com` |
 
-The default branch suffix is omitted. Both `wormhole http 3000` and `wormhole run` use the
-inferred project/worktree name; port numbers never appear in automatic HTTP URLs.
+The default branch suffix and port are omitted. The relay reserves the label, Tailscale gets a
+deterministic HTTPS port, and Cloudflare named tunnels use the same label.
 
-The self-hosted relay receives the derived label and reserves it persistently. Tailscale receives a
-deterministic HTTPS port. Cloudflare named tunnels use the same label but also need a DNS zone; set
-it in the process environment or the project's existing `.env` file:
+Set the Cloudflare DNS zone in the environment or `.env`:
 
 ```dotenv
 WORMHOLE_DOMAIN=preview.example.com
 ```
 
-`WORMHOLE_DOMAIN` takes priority over `.env`, which takes priority over optional global/project
-configuration. Configuration remains available for shared defaults and overrides:
+Optional defaults:
 
 ```toml
 [defaults]
@@ -237,82 +209,55 @@ tailscale_https_port_range = { start = 20000, end = 49999 }
 stable_worktree_urls = false
 ```
 
-Explicit `--host`, `--public-port`, and `wormhole.toml` endpoint values still take priority where
-applicable. Use `wormhole.toml` only when declarative multi-service `wormhole up` behavior is useful.
+Priority: explicit `--host`/`--public-port`/`wormhole.toml`, then `WORMHOLE_DOMAIN`, `.env`, and
+shared config. Use `wormhole.toml` for multi-service `wormhole up` projects.
 
----
+## Deploy a Cloudflare Worker relay
 
-## Cloudflare Worker relay
+The Worker relay in [`crates/wormholed-cloudflare`](crates/wormholed-cloudflare) provides signed
+WebSocket control, invite enrollment, stable HTTP hosts, streaming, edge auth, and Durable Object
+state.
 
-Wormhole includes a separate, deployable relay for Cloudflare Workers in
-[`crates/wormholed-cloudflare`](crates/wormholed-cloudflare). It uses Cloudflare-managed HTTPS and a
-SQLite-backed Durable Object to provide:
-
-- the existing CLI's signed WebSocket control transport and invite enrollment;
-- stable or generated HTTP hostnames with persistent reservations;
-- streamed HTTP request and response bodies;
-- Basic, Bearer, and share-link edge authentication; and
-- bearer-protected invite creation, listing, and revocation.
-
-Deploy, verify, create a one-use invite, and configure this machine's remote in one command. A
-dedicated subdomain is the safest default when the main domain already has websites or services:
+Deploy to a dedicated namespace:
 
 ```console
 wormhole relay deploy cloudflare --domain wormhole.example.com
 ```
 
-Here, clients connect through `relay.wormhole.example.com`, exposed apps receive names such as
-`myapp.wormhole.example.com`, and existing hosts such as `example.com`, `www.example.com`, or
-`stuff.example.com` remain unaffected. The `--domain` value is Wormhole's public namespace, not the
-client connection hostname.
+`--domain` selects the namespace. This example uses `relay.wormhole.example.com` for control and
+`myapp.wormhole.example.com` for apps without touching `example.com`, `www.example.com`, or
+`stuff.example.com`. Using `--domain example.com` creates `myapp.example.com` but can intercept
+existing `*.example.com` hosts.
 
-Using `--domain example.com` instead produces shorter names such as `myapp.example.com`, but the
-required wildcard Worker route can intercept existing `*.example.com` services. Use the apex only
-when that entire subdomain namespace is available to Wormhole.
+The command verifies its versioned bundle, runs pinned Wrangler, sends generated secrets through
+stdin, and rolls back failed deployment/onboarding. Use `--dry-run` or `--bundle PATH` for local or
+offline validation. Production needs a Cloudflare API token, active zone, Node.js/npm, and Durable
+Objects. Workers Logs are off by default.
 
-The CLI verifies its version-matched Worker bundle, runs pinned Wrangler, configures only the relay
-and wildcard DNS/routes, uploads generated secrets through stdin, and rolls back changes after a
-failed health check or enrollment. Use `--dry-run` for local validation and `--bundle PATH` for an
-audited or offline artifact. Production deployment requires a suitable Cloudflare API token, an
-active zone, Node.js/npm, and a Durable Objects plan. Workers Logs remain disabled by default;
-operators can opt into 1%-sampled invocation logging as documented in the deployment guide.
+### Manual DNS
 
-### Why Cloudflare DNS records are required
-
-Wrangler Custom Domains automatically create DNS and TLS for one exact hostname. Wormhole also needs
-a wildcard hostname for dynamically named apps, and Cloudflare Custom Domains do not support
-wildcards. The deploy command therefore creates proxied DNS plus Worker Routes for both the control
-hostname and the public wildcard.
-
-If DNS is managed manually for `--domain wormhole.example.com`, create these records in the
-`example.com` Cloudflare zone before deploying:
+Custom Domains do not support the wildcard needed for generated app hosts. For
+`--domain wormhole.example.com`, create:
 
 | Type | Name | Target | Proxy status |
 | --- | --- | --- | --- |
 | A | `relay.wormhole` | `192.0.2.1` | Proxied |
 | A | `*.wormhole` | `192.0.2.1` | Proxied |
 
-`192.0.2.1` is a reserved documentation address used only as an originless placeholder; matching
-requests are handled by the Worker Route before reaching it. Do not change the zone apex. After the
-records resolve, deploy through an existing Wrangler login without creating an API token:
+`192.0.2.1` is an originless documentation placeholder; the Worker Route handles requests. Then run:
 
 ```console
 wormhole relay deploy cloudflare --domain wormhole.example.com --manual-dns
 ```
 
-Manual-DNS mode skips Cloudflare's zone and DNS APIs. Wrangler still deploys the Worker, routes,
-Durable Object migration, and secrets; Wormhole then verifies health and completes local onboarding.
+Manual mode skips zone/DNS APIs but still deploys the Worker, routes, migration, secrets, health
+check, and onboarding. Use VPS `wormholed` for QUIC, raw TCP, arbitrary upgrades, WebSocket
+extensions/raw bytes, or offline webhook buffering. See the
+[Cloudflare Worker guide](docs/CLOUDFLARE_DEPLOY.md).
 
-The Worker relay supports HTTP/HTTPS targets and bounded public WebSocket message bridging rather
-than full transport parity. Use the VPS `wormholed` relay when you need QUIC control, raw TCP, other
-public upgrade protocols, WebSocket extensions/raw upgrade bytes, or offline webhook buffering. See
-the [Cloudflare Worker guide](docs/CLOUDFLARE_DEPLOY.md) for architecture,
-configuration, security boundaries, and the explicit deployment command.
+## Run a VPS relay
 
-## Run a relay
-
-After pointing apex and wildcard DNS records at a Debian/Ubuntu server, run the interactive
-bootstrap directly from the latest GitHub release:
+After pointing apex and wildcard DNS at Debian/Ubuntu:
 
 ```console
 curl --proto '=https' --tlsv1.2 -LsSf \
@@ -320,8 +265,7 @@ curl --proto '=https' --tlsv1.2 -LsSf \
   | sudo sh
 ```
 
-For a single noninteractive Cloudflare DNS-01 installation, store a narrowly scoped token in a
-root-only file and pass every required input explicitly:
+Noninteractive Cloudflare DNS-01 install:
 
 ```console
 sudo chmod 600 /root/cloudflare.token
@@ -331,15 +275,17 @@ curl --proto '=https' --tlsv1.2 -LsSf \
       --cloudflare-token-file /root/cloudflare.token -y
 ```
 
-`-y` accepts the displayed plan but never enables UFW or overwrites an installation. Those require
-separate `--configure-ufw` and `--force` flags. Raw secrets are never accepted as arguments. When no
-client public key is supplied, bootstrap prints a single-use initial enrollment invite once.
-See the [deployment guide](docs/DEPLOY.md) for static TLS, client authorization, DNS, firewall,
-rollback, and container setup.
+`-y` accepts the plan. UFW and overwrite still require `--configure-ufw` and `--force`. Secrets are
+never accepted as arguments. Without a client key, bootstrap prints one single-use invite. See the
+[server deployment guide](docs/DEPLOY.md).
 
----
+## What you get
 
-## Comparison
+- One command for Wormhole, Tailscale, Cloudflare, or all three
+- HTTP(S), raw TCP, stable worktree URLs, and declarative projects
+- Process supervision, inspection/replay, retries, and durable webhook buffering
+- Self-hosted VPS and Cloudflare Worker relays
+- Deterministic JSON and a local Unix-socket API; no web UI required
 
 | Capability | Wormhole | ngrok | Others | portless |
 | --- | --- | --- | --- | --- |
@@ -351,52 +297,28 @@ rollback, and container setup.
 | Durable offline webhook buffering | Yes | No | Varies | No |
 | Deterministic JSON and local APIs | Yes | CLI/API | Varies | CLI |
 
----
+Alternatives: [LocalCan](https://www.localcan.com/) for native macOS and `.local` domains,
+[Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/),
+[ngrok](https://ngrok.com/docs/guides/share-localhost/tunnels/),
+[Tailscale Funnel](https://tailscale.com/docs/reference/tailscale-cli/funnel),
+[zrok](https://github.com/openziti/zrok), [portless](https://github.com/vercel-labs/portless), and
+[LocalTunnel](https://localtunnel.github.io/www/).
 
-## Alternatives
+## API and documentation
 
-Wormhole focuses on self-hosting, worktree identity, multiple exposure providers, and
-agent-friendly local APIs. Other excellent tools may fit a narrower workflow better:
-
-- [LocalCan](https://www.localcan.com/) — A polished native macOS experience for `.local` domains,
-  public URLs, and traffic inspection. A great fit for desktop-first local development.
-- [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/) —
-  Managed ingress through Cloudflare, with quick tunnels available for temporary sharing.
-- [ngrok](https://ngrok.com/docs/guides/share-localhost/tunnels/) — A mature hosted tunneling
-  platform with a broad edge feature set and hosted inspection.
-- [Tailscale Funnel](https://tailscale.com/docs/reference/tailscale-cli/funnel) — Public HTTPS
-  exposure directly from a device already connected to a tailnet.
-- [zrok](https://github.com/openziti/zrok) — Open-source, self-hostable sharing for web services,
-  files, and other network resources.
-- [portless](https://github.com/vercel-labs/portless) — Stable named localhost URLs for local apps,
-  monorepos, and worktrees without requiring a public relay.
-- [LocalTunnel](https://localtunnel.github.io/www/) — A lightweight way to share a local HTTP
-  service through a hosted public URL.
-
----
-
-## Local API
-
-With the daemon running, the Scalar API reference is available at
-[http://127.0.0.1:52731/docs](http://127.0.0.1:52731/docs). Operational routes remain protected by
-the daemon bearer token. Typed `GET /v1/remotes`, `POST /v1/remotes`, and
-`DELETE /v1/remotes/{name}` operations support future onboarding UIs; invite values are accepted
-only by the add request and are never returned or persisted.
-
----
-
-## Documentation
+With the daemon running, open [http://127.0.0.1:52731/docs](http://127.0.0.1:52731/docs). Management
+uses the daemon bearer token. Remote onboarding is available through `GET /v1/remotes`,
+`POST /v1/remotes`, and `DELETE /v1/remotes/{name}`; invite values are never returned or persisted.
 
 - [Optional macOS menu-bar companion](apps/macos/README.md)
 - [Server deployment](docs/DEPLOY.md)
+- [Cloudflare Worker deployment](docs/CLOUDFLARE_DEPLOY.md)
 - [Local releases](docs/RELEASING.md)
 - [Wire protocol](docs/PROTOCOL.md)
 
----
-
 ## Development
 
-Rust 1.97 or newer is required.
+Requires Rust 1.97+.
 
 ```console
 make lint
@@ -404,16 +326,12 @@ make test
 make e2e
 ```
 
-After committing and pushing a clean tree, `make signoff` runs formatting, lint, size, build, the
-full workspace suite, E2E, shell/bootstrap checks, and dependency policy checks before recording a
-`gh-signoff` status on that exact commit. It never signs off after a failed or partial run.
+After a clean push, `make signoff` runs formatting, lint, size, build, tests, E2E, shell/bootstrap,
+and dependency policy before recording `gh-signoff`. Cloud CI runs only with a PR's `run-ci` label
+or `workflow_dispatch`; macOS and coverage remain manual.
 
-Cloud CI does not run on every push. Apply the `run-ci` label to a pull request to approve one cloud
-run for its current head, or use `workflow_dispatch`; remove and reapply the label after later commits
-when another run is wanted. macOS and coverage jobs remain manual-dispatch only.
-
-`make coverage` generates the workspace report. `make coverage-e2e` also runs ignored local-socket
-E2E flows and writes merged HTML coverage to `target/llvm-cov/html`.
+`make coverage` writes workspace coverage. `make coverage-e2e` adds ignored local-socket E2E flows
+and writes HTML to `target/llvm-cov/html`.
 
 ---
 
@@ -422,4 +340,4 @@ E2E flows and writes merged HTML coverage to `target/llvm-cov/html`.
 </p>
 
 > [!WARNING]
-> This project was developed with the assistance of AI. Please review and validate the code carefully before using it in production or security-sensitive environments.
+> This project was developed with AI assistance. Review it before production or security-sensitive use.
