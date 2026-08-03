@@ -69,6 +69,7 @@ update_release_files() {
     local worktree=$1 version=$2
     VERSION="$version" WORKTREE="$worktree" python3 - <<'PY'
 import datetime
+import json
 import os
 import re
 from pathlib import Path
@@ -96,6 +97,15 @@ link = f"[{version}]: https://github.com/nikuscs/wormhole/releases/tag/v{version
 if link not in text:
     text = text.rstrip() + f"\n{link}\n"
 changelog.write_text(text)
+
+for relative in (
+    "crates/wormhole-cli/tests/fixtures/local-api.openapi.json",
+    "crates/wormholed/tests/fixtures/admin-api.openapi.json",
+):
+    fixture = root / relative
+    document = json.loads(fixture.read_text())
+    document["info"]["version"] = version
+    fixture.write_text(json.dumps(document, indent=2) + "\n")
 PY
 }
 
@@ -335,7 +345,9 @@ build_release() {
     git -C "$ROOT" worktree add --detach "$worktree" "$source_sha"
     update_release_files "$worktree" "$version"
     (cd "$worktree" && cargo check --workspace)
-    git -C "$worktree" add Cargo.toml Cargo.lock CHANGELOG.md
+    git -C "$worktree" add Cargo.toml Cargo.lock CHANGELOG.md \
+        crates/wormhole-cli/tests/fixtures/local-api.openapi.json \
+        crates/wormholed/tests/fixtures/admin-api.openapi.json
     git -C "$worktree" diff --cached --check
     git -C "$worktree" -c commit.gpgsign=false commit -m "chore: release $tag [skip ci]"
     release_sha=$(git -C "$worktree" rev-parse HEAD)
