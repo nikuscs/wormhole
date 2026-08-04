@@ -8,11 +8,11 @@ readonly LINUX_TARGETS=(aarch64-unknown-linux-gnu x86_64-unknown-linux-gnu)
 usage() {
     cat >&2 <<'EOF'
 usage:
-  scripts/release-local.sh build patch|minor|major [--unsigned] [--skip-gate]
+  scripts/release-local.sh build [patch|minor|major] [--unsigned] [--skip-gate]
   scripts/release-local.sh publish vX.Y.Z [--yes]
 
-build creates and validates every release artifact before preserving an unpushed
-release commit under refs/wormhole-release/vX.Y.Z. By default it signs and
+build defaults to a patch bump and validates every release artifact before preserving an
+unpushed release commit under refs/wormhole-release/vX.Y.Z. By default it signs and
 notarizes macOS archives. --unsigned is for build validation only and cannot be
 published. publish fast-forwards main to the exact commit that was built, creates
 and atomically pushes the tag, runs make signoff, creates the GitHub release, and
@@ -346,9 +346,11 @@ write_state() {
 }
 
 build_release() {
-    [[ $# -ge 1 ]] || usage
-    local bump=$1 unsigned=false skip_gate=false option
-    shift
+    local bump=patch unsigned=false skip_gate=false option
+    if [[ $# -gt 0 && "$1" != --* ]]; then
+        bump=$1
+        shift
+    fi
     for option in "$@"; do
         case "$option" in
             --unsigned) unsigned=true ;;

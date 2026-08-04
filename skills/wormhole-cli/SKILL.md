@@ -20,7 +20,7 @@ Run from the project or worktree directory. Keep foreground commands attached an
 | Expose an existing TCP server | `wormhole tcp <PORT>` |
 | Start `wormhole.toml` services | `wormhole up` |
 
-Prefer `wormhole run`. Preserve everything after `--` exactly. Wormhole allocates a free port in `4000-4999`, injects supported framework port/host settings, waits for the listener, and cleans up when the child exits. Explicit app flags win.
+Prefer `wormhole run`. Preserve everything after `--` exactly. Wormhole allocates a free port in `4000-4999`, injects supported framework port/host settings and public URL environment aliases, waits for the listener, and cleans up when the child exits. Injected URL values override project `.env` files; explicit app flags win.
 
 ```sh
 wormhole run -- bun run dev

@@ -4,6 +4,29 @@
 struct FrameworkFlags {
     strict_port: bool,
     host: HostFlag,
+    url_environment: UrlEnvironment,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum UrlEnvironment {
+    Generic,
+    Vite,
+    Next,
+    Nuxt,
+    Public,
+    Expo,
+}
+
+impl UrlEnvironment {
+    const fn variables(self) -> &'static [&'static str] {
+        match self {
+            Self::Generic | Self::Vite => &[],
+            Self::Next => &["NEXT_PUBLIC_APP_URL", "NEXT_PUBLIC_SITE_URL"],
+            Self::Nuxt => &["NUXT_PUBLIC_APP_URL", "NUXT_PUBLIC_SITE_URL"],
+            Self::Public => &["PUBLIC_APP_URL", "PUBLIC_SITE_URL"],
+            Self::Expo => &["EXPO_PUBLIC_APP_URL"],
+        }
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -31,6 +54,14 @@ enum Invocation {
     Direct,
     Package,
     TurboPackage,
+}
+
+pub(super) fn public_url_environment(
+    arguments: &[String],
+    cwd: &std::path::Path,
+) -> &'static [&'static str] {
+    detect_framework(arguments, cwd)
+        .map_or(&[], |detection| detection.framework.url_environment.variables())
 }
 
 pub(super) fn inject_framework_flags(
@@ -124,6 +155,7 @@ fn package_script_framework(
     let script = document.get("scripts")?.get(script_name)?.as_str()?;
     let tokens = script_tokens(script);
     script_detection(&tokens, Invocation::Package)
+        .map(|detection| refine_vite_detection(detection, &document))
         .or_else(|| turbo_script_detection(&tokens, cwd, &document))
 }
 
@@ -154,6 +186,25 @@ fn turbo_script_detection(
     let package = workspace_package(cwd, root, filter)?;
     let script = package.get("scripts")?.get(task)?.as_str()?;
     script_detection(&script_tokens(script), Invocation::TurboPackage)
+        .map(|detection| refine_vite_detection(detection, &package))
+}
+
+fn refine_vite_detection(
+    mut detection: FrameworkDetection,
+    package: &serde_json::Value,
+) -> FrameworkDetection {
+    if detection.framework.url_environment == UrlEnvironment::Vite
+        && package_has_dependency(package, "@sveltejs/kit")
+    {
+        detection.framework.url_environment = UrlEnvironment::Public;
+    }
+    detection
+}
+
+fn package_has_dependency(package: &serde_json::Value, name: &str) -> bool {
+    ["dependencies", "devDependencies"]
+        .iter()
+        .any(|section| package.get(section).and_then(|value| value.get(name)).is_some())
 }
 
 fn turbo_filter<'a>(tokens: &'a [&str]) -> Option<&'a str> {
@@ -203,17 +254,16 @@ fn script_tokens(script: &str) -> Vec<&str> {
 }
 
 fn framework(command: &str) -> Option<FrameworkFlags> {
-    match command {
-        "vite" | "vp" | "react-router" => {
-            Some(FrameworkFlags { strict_port: true, host: HostFlag::Loopback })
-        }
-        "rsbuild" | "astro" | "ng" | "react-native" => {
-            Some(FrameworkFlags { strict_port: false, host: HostFlag::Loopback })
-        }
-        "next" => Some(FrameworkFlags { strict_port: false, host: HostFlag::None }),
-        "expo" => Some(FrameworkFlags { strict_port: false, host: HostFlag::Expo }),
-        _ => None,
-    }
+    let (strict_port, host, url_environment) = match command {
+        "vite" | "vp" | "react-router" => (true, HostFlag::Loopback, UrlEnvironment::Vite),
+        "rsbuild" | "astro" | "svelte-kit" => (false, HostFlag::Loopback, UrlEnvironment::Public),
+        "nuxt" | "nuxi" => (false, HostFlag::Loopback, UrlEnvironment::Nuxt),
+        "ng" | "react-native" => (false, HostFlag::Loopback, UrlEnvironment::Generic),
+        "next" => (false, HostFlag::None, UrlEnvironment::Next),
+        "expo" => (false, HostFlag::Expo, UrlEnvironment::Expo),
+        _ => return None,
+    };
+    Some(FrameworkFlags { strict_port, host, url_environment })
 }
 
 fn basename(value: &str) -> &str {

@@ -112,6 +112,7 @@ jobs:
         run: |
           python3 - <<'PY'
           import datetime
+          import json
           import os
           import re
           from pathlib import Path
@@ -123,8 +124,25 @@ jobs:
           text = changelog.read_text()
           heading = f"## [Unreleased]\n\n## [{version}] - {datetime.date.today().isoformat()}"
           text = text.replace("## [Unreleased]", heading, 1)
-          text += f"\n[{version}]: https://github.com/nikuscs/wormhole/releases/tag/v{version}\n"
+          text = re.sub(
+              r"(?m)^\[Unreleased\]: .*$",
+              f"[Unreleased]: https://github.com/nikuscs/wormhole/compare/v{version}...HEAD",
+              text,
+              count=1,
+          )
+          link = f"[{version}]: https://github.com/nikuscs/wormhole/releases/tag/v{version}"
+          if link not in text:
+              text = text.rstrip() + f"\n{link}\n"
           changelog.write_text(text)
+
+          for relative in (
+              "crates/wormhole-cli/tests/fixtures/local-api.openapi.json",
+              "crates/wormholed/tests/fixtures/admin-api.openapi.json",
+          ):
+              fixture = Path(relative)
+              document = json.loads(fixture.read_text())
+              document["info"]["version"] = version
+              fixture.write_text(json.dumps(document, indent=2) + "\n")
           PY
           cargo check --workspace
           test "$(cargo metadata --no-deps --format-version 1 | jq -r '[.packages[].version] | unique | join(" ")')" = "$VERSION"
@@ -133,7 +151,9 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add Cargo.toml Cargo.lock CHANGELOG.md
+          git add Cargo.toml Cargo.lock CHANGELOG.md \
+            crates/wormhole-cli/tests/fixtures/local-api.openapi.json \
+            crates/wormholed/tests/fixtures/admin-api.openapi.json
           git commit -m "chore: release ${{ steps.version.outputs.tag }} [skip ci]"
           echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
           git tag -a "${{ steps.version.outputs.tag }}" -m "Release ${{ steps.version.outputs.tag }}"

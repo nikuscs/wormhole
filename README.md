@@ -110,7 +110,10 @@ wormhole run -- bun run dev
 ```
 
 `wormhole run` sets `PORT`, starts the child, detects its listener, exposes it, and cleans up on exit.
-It supplies compatible `--port` and `--host` flags for common frameworks; explicit flags win.
+It injects `WORMHOLE_URL`, `APP_URL`, and `VITE_APP_URL`, plus detected framework aliases:
+`NEXT_PUBLIC_{APP,SITE}_URL`, `NUXT_PUBLIC_{APP,SITE}_URL`, `PUBLIC_{APP,SITE}_URL`, or
+`EXPO_PUBLIC_APP_URL`. Injected values override project `.env` files. Compatible `--port` and
+`--host` flags are supplied for common frameworks; explicit flags win.
 Temporary relay endpoints set `X-Robots-Tag` to `noindex, nofollow, noarchive, nosnippet`. This is
 not access control.
 

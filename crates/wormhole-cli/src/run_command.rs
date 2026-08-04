@@ -30,7 +30,7 @@ mod run_framework;
 #[path = "run_port.rs"]
 mod run_port;
 
-use run_framework::inject_framework_flags;
+use run_framework::{inject_framework_flags, public_url_environment};
 use run_port::reserve_app_port;
 
 pub async fn execute(cli: &Cli, args: &RunArgs) -> Result<(), CliError> {
@@ -80,8 +80,9 @@ pub async fn execute(cli: &Cli, args: &RunArgs) -> Result<(), CliError> {
         cleanup?;
         return Err(CliError::EndpointFailed);
     };
+    let url_environment = public_url_environment(&args.command, &std::env::current_dir()?);
     let mut command = prepared_command(&args.command, app_port)?;
-    configure_child(&mut command, app_port, &url);
+    configure_child(&mut command, app_port, &url, url_environment);
     let started = Timestamp::now();
     if let Some(reservation) = &mut app_reservation {
         reservation.release_listener();
@@ -123,13 +124,19 @@ fn child_exit_code(status: std::process::ExitStatus) -> u8 {
     status.code().and_then(|code| code.try_into().ok()).unwrap_or(1)
 }
 
-fn configure_child(command: &mut Command, app_port: u16, url: &str) {
+fn configure_child(
+    command: &mut Command,
+    app_port: u16,
+    url: &str,
+    framework_url_environment: &[&str],
+) {
     command
         .env("PORT", app_port.to_string())
         .env("HOST", Ipv4Addr::LOCALHOST.to_string())
         .env("WORMHOLE_URL", url)
-        .env("VITE_APP_URL", url)
         .env("APP_URL", url)
+        .env("VITE_APP_URL", url)
+        .envs(framework_url_environment.iter().map(|name| (*name, url)))
         .stdin(Stdio::inherit())
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit());

@@ -9,7 +9,13 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Framework-aware public URL environment aliases for Next.js, Nuxt, SvelteKit, Astro, Rsbuild,
+  and Expo commands launched through `wormhole run`.
 - MIT licensing and generated third-party notices in every release archive and container image.
+
+### Changed
+
+- Local release builds now default to a patch version bump.
 
 ## [0.1.0] - 2026-08-03
 

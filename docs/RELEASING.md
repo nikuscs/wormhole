@@ -51,10 +51,11 @@ The release command passes `WORMHOLE_SIGNING_KEYCHAIN` to both `codesign` and `n
 Start from a clean `main` that exactly matches `origin/main`:
 
 ```bash
-scripts/release-local.sh build minor
+scripts/release-local.sh build
 ```
 
-Use `patch`, `minor`, or `major`. The first release must use `minor`, producing `v0.1.0`.
+`build` defaults to a patch bump. Pass `minor` or `major` explicitly when needed. The first release
+must use `minor`, producing `v0.1.0`.
 
 The command creates a detached worktree, updates the version and changelog there, commits the exact
 source being built, runs the repository gate, and produces:

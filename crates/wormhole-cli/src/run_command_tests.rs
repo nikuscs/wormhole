@@ -1,6 +1,6 @@
 use super::{
     configure_child, prepared_command, public_hostname,
-    run_framework::inject_framework_flags,
+    run_framework::{inject_framework_flags, public_url_environment},
     run_port::{reserve_all_families, reserve_app_port, reserve_generated_port_in, reserve_ipv6},
 };
 use crate::runtime::LOCAL_API_PORT;
@@ -8,7 +8,8 @@ use crate::runtime::LOCAL_API_PORT;
 #[test]
 fn child_receives_public_url_environment_aliases() {
     let mut command = tokio::process::Command::new("true");
-    configure_child(&mut command, 4321, "https://app.example.com");
+    command.env("APP_URL", "http://localhost:3000").env("VITE_APP_URL", "local");
+    configure_child(&mut command, 4321, "https://app.example.com", &["VITE_APP_URL"]);
 
     for name in ["WORMHOLE_URL", "VITE_APP_URL", "APP_URL"] {
         let value = command
@@ -26,6 +27,39 @@ fn child_receives_public_url_environment_aliases() {
         .flatten()
         .expect("Vite allowed hosts");
     assert!(vite_hosts.to_string_lossy().split(',').any(|host| host == "app.example.com"));
+}
+
+#[test]
+fn frameworks_receive_only_their_public_url_conventions() {
+    let cases = [
+        ("vite", &[][..]),
+        ("next", &["NEXT_PUBLIC_APP_URL", "NEXT_PUBLIC_SITE_URL"][..]),
+        ("nuxt", &["NUXT_PUBLIC_APP_URL", "NUXT_PUBLIC_SITE_URL"][..]),
+        ("astro", &["PUBLIC_APP_URL", "PUBLIC_SITE_URL"][..]),
+        ("rsbuild", &["PUBLIC_APP_URL", "PUBLIC_SITE_URL"][..]),
+        ("expo", &["EXPO_PUBLIC_APP_URL"][..]),
+        ("cargo", &[][..]),
+    ];
+    for (framework, expected) in cases {
+        let command = vec![framework.to_owned(), "dev".to_owned()];
+        assert_eq!(public_url_environment(&command, std::path::Path::new(".")), expected);
+    }
+}
+
+#[test]
+fn sveltekit_vite_script_receives_public_url_conventions() {
+    let directory = tempfile::tempdir().expect("tempdir");
+    std::fs::write(
+        directory.path().join("package.json"),
+        r#"{"scripts":{"dev":"vite dev"},"devDependencies":{"@sveltejs/kit":"latest"}}"#,
+    )
+    .expect("package JSON");
+    let command = vec!["npm".to_owned(), "run".to_owned(), "dev".to_owned()];
+
+    assert_eq!(
+        public_url_environment(&command, directory.path()),
+        ["PUBLIC_APP_URL", "PUBLIC_SITE_URL"]
+    );
 }
 
 #[test]
