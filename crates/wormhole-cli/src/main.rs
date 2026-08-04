@@ -25,6 +25,7 @@ mod project;
 mod project_commands;
 mod project_env;
 mod project_name;
+mod project_root;
 mod relay_commands;
 mod remote_onboarding;
 mod run_command;

@@ -52,8 +52,9 @@ pub async fn up(cli: &Cli, names: &[String]) -> Result<(), CliError> {
 }
 
 pub async fn down(cli: &Cli, targets: &[String], forget: bool) -> Result<(), CliError> {
+    let cwd = std::env::current_dir()?;
     if targets.iter().any(|target| target.parse::<uuid::Uuid>().is_ok())
-        || (!targets.is_empty() && !std::path::Path::new("wormhole.toml").exists())
+        || (!targets.is_empty() && crate::project_root::config_path(&cwd).is_none())
     {
         return crate::tunnel_commands::down(cli, targets, forget).await;
     }

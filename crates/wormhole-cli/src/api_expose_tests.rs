@@ -35,7 +35,7 @@ fn reservation_restore_matches_equivalent_specs_without_reusing_candidates() {
     cached_second.reservation = Some(second_reservation);
     let mut requested = vec![second, first];
 
-    assert!(restore_reservations(&mut requested, &[cached_first, cached_second]));
+    assert!(restore_reservations(&mut requested, &[cached_first, cached_second]).is_empty());
     assert_eq!(requested[0].reservation, Some(second_reservation));
     assert_eq!(requested[1].reservation, Some(first_reservation));
     assert_eq!(
@@ -46,11 +46,15 @@ fn reservation_restore_matches_equivalent_specs_without_reusing_candidates() {
 
 #[test]
 fn reservation_restore_reports_unmatched_cached_persistence() {
+    let reservation = uuid::Uuid::now_v7();
     let mut cached = spec("old");
-    cached.reservation = Some(uuid::Uuid::now_v7());
+    cached.reservation = Some(reservation);
     let mut requested = vec![spec("new")];
 
-    assert!(!restore_reservations(&mut requested, &[cached]));
+    let orphans = restore_reservations(&mut requested, &[cached]);
+
+    assert_eq!(orphans.len(), 1);
+    assert_eq!(orphans[0].reservation, Some(reservation));
     assert_eq!(requested[0].reservation, None);
 }
 

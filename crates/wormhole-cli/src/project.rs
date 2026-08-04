@@ -15,7 +15,7 @@ use wormhole_core::{
 };
 use wormhole_proto::frames::{BufferPolicy, EdgeAuth, Persistence};
 
-use crate::{error::CliError, project_name, tunnel_commands::parse_target};
+use crate::{error::CliError, project_name, project_root, tunnel_commands::parse_target};
 
 #[derive(Debug, Deserialize)]
 pub struct ProjectConfig {
@@ -78,7 +78,9 @@ pub struct ProjectRetry {
 
 impl ProjectConfig {
     pub fn load(directory: &Path) -> Result<Self, CliError> {
-        let path = directory.join("wormhole.toml");
+        let path = project_root::config_path(directory).ok_or_else(|| {
+            CliError::Invalid("no wormhole.toml in this directory or repository".to_owned())
+        })?;
         let content = fs::read_to_string(&path)?;
         toml::from_str(&content).map_err(|error| CliError::Invalid(error.to_string()))
     }

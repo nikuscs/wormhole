@@ -170,8 +170,8 @@ Merge with existing entries. Use only a Wormhole preview namespace. See the
 
 ## Stable worktree URLs
 
-Stable identities require no config. Wormhole derives them from the `package.json` name (or
-folder), service, and Git branch:
+Stable identities require no config. Wormhole derives them from the Git repository name, service,
+and branch:
 
 ```json
 {
@@ -194,6 +194,19 @@ folder), service, and Git branch:
 
 The default branch suffix and port are omitted. The relay reserves the label, Tailscale gets a
 deterministic HTTPS port, and Cloudflare named tunnels use the same label.
+
+Names resolve in order: `--host`, the nearest `wormhole.toml` `name`, the Git repository name, the
+`package.json` name, then the folder. `wormhole.toml` is read from the current directory upwards,
+stopping at the repository root, so every package in a monorepo inherits one project name. A
+repository-derived name gains the subdirectory as a suffix, keeping `apps/web` and `apps/api`
+distinct.
+
+The `name` accepts `{repo}`, `{branch}`, `{service}`, `{dir}`, and `{worktree}` placeholders. Using
+`{branch}` or `{service}` suppresses the automatic suffix so the template controls the whole label:
+
+```toml
+name = "{repo}-{branch}"
+```
 
 Set the Cloudflare DNS zone in the environment or `.env`:
 
@@ -257,6 +270,10 @@ Manual mode skips zone/DNS APIs but still deploys the Worker, routes, migration,
 check, and onboarding. Use VPS `wormholed` for QUIC, raw TCP, arbitrary upgrades, WebSocket
 extensions/raw bytes, or offline webhook buffering. See the
 [Cloudflare Worker guide](docs/CLOUDFLARE_DEPLOY.md).
+
+Deployment does not configure WAF rate limiting. Public hostname traffic invokes the Durable Object,
+so add a rate limiting rule for the wildcard hosts before real use. See
+[Cost and abuse controls](docs/CLOUDFLARE_DEPLOY.md#cost-and-abuse-controls).
 
 ## Run a VPS relay
 

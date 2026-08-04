@@ -111,6 +111,43 @@ wormhole relay deploy cloudflare --domain <NAMESPACE>
 
 Prefer a dedicated namespace such as `wormhole.example.com`. Use `--manual-dns` only for operator-managed DNS and `--yes` only when explicitly requested. Let Wormhole manage Wrangler, routes, secrets, verification, enrollment, and rollback.
 
+Deployment does not configure WAF rate limiting. After deploying, point the user at
+[Cost and abuse controls](https://github.com/nikuscs/wormhole/blob/main/docs/CLOUDFLARE_DEPLOY.md#cost-and-abuse-controls);
+it is dashboard work under Security > Security rules and needs a token with `Zone > WAF > Edit` to script.
+
+## Names
+
+Resolution order: `--host`, nearest `wormhole.toml` `name`, Git repository name, `package.json`
+name, folder. `wormhole.toml` is read from the current directory upwards to the repository root, so
+monorepo packages inherit it. Repository-derived names append the subdirectory (`social-farmer-web`).
+A non-default branch is appended automatically.
+
+`name` accepts `{repo}`, `{branch}`, `{service}`, `{dir}`, `{worktree}`; `{branch}` or `{service}`
+suppresses the matching automatic suffix.
+
+```toml
+name = "{repo}-{branch}"
+```
+
+## Where things live
+
+| Item | Path |
+| --- | --- |
+| Client config and remotes | `~/.config/wormhole/config.toml` |
+| Identity key | `~/.config/wormhole/keys/identity.key` |
+| Daemon socket, state, relay admin token | `~/Library/Application Support/wormhole/` (macOS) |
+
+Read config with `wormhole --json remote ls`; do not hand-edit `config.toml` while the daemon runs.
+
+## Reference docs
+
+Read these before answering from memory; `wrangler` has no WAF, DNS, or rate-limiting commands.
+
+- [README](https://github.com/nikuscs/wormhole#readme) — install, endpoints, `wormhole.toml`
+- [docs/CLOUDFLARE_DEPLOY.md](https://github.com/nikuscs/wormhole/blob/main/docs/CLOUDFLARE_DEPLOY.md) — Worker relay deploy, feature matrix, cost and abuse controls
+- [docs/DEPLOY.md](https://github.com/nikuscs/wormhole/blob/main/docs/DEPLOY.md) — VPS `wormholed` relay
+- [docs/PROTOCOL.md](https://github.com/nikuscs/wormhole/blob/main/docs/PROTOCOL.md) — wire protocol
+
 ## Cleanup and guardrails
 
 - `wormhole run` and attached temporary commands clean up when stopped.

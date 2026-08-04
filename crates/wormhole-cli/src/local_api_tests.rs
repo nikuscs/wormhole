@@ -203,7 +203,7 @@ async fn authenticated_routes_create_status_share_stop_restart_and_forget() {
 }
 
 #[tokio::test]
-async fn stopped_service_requires_reservation_compatible_restart() {
+async fn stopped_service_reuses_matching_reservations_and_releases_renamed_ones() {
     let state = test_state();
     let key = crate::state_db::DesiredKey::new("project".to_owned(), "web".to_owned())
         .expect("desired key");
@@ -222,14 +222,19 @@ async fn stopped_service_requires_reservation_compatible_restart() {
     state.database.put(&cached).expect("persist stopped service");
     state.desired.write().await.insert(key.clone(), cached.clone());
 
-    let mut incompatible = request();
-    incompatible.endpoints[0].persist = Persistence::Persistent;
-    incompatible.endpoints[0].host = Some("changed".to_owned());
-    let conflict = create_service(State(state.clone()), Json(incompatible))
-        .await
-        .expect_err("changed reservation identity");
-    assert_eq!(conflict.into_response().status(), StatusCode::CONFLICT);
+    // A renamed label no longer matches its predecessor's reservation, which must be released
+    // rather than block the restart.
+    let mut renamed = request();
+    renamed.endpoints[0].persist = Persistence::Persistent;
+    renamed.endpoints[0].host = Some("changed".to_owned());
+    let restarted = create_service(State(state.clone()), Json(renamed)).await.expect("rename");
+    assert_eq!(restarted.0, StatusCode::CREATED);
+    assert_ne!(
+        state.desired.read().await.get(&key).expect("desired").endpoints[0].reservation,
+        cached_endpoint.reservation
+    );
 
+    state.desired.write().await.insert(key.clone(), cached.clone());
     let mut compatible = request();
     compatible.endpoints[0].persist = Persistence::Persistent;
     let restarted = create_service(State(state.clone()), Json(compatible)).await.expect("restart");

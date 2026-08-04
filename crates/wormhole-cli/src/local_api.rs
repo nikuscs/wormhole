@@ -4,7 +4,8 @@ use std::{collections::BTreeMap, time::Duration};
 
 use crate::{
     api_expose::{
-        expose_desired, failure_message, prepare_forget_bindings, restore_reservations, wait_ready,
+        expose_desired, failure_message, prepare_forget_bindings, release_reservations,
+        restore_reservations, wait_ready,
     },
     local_api_auth::SecurityAddon,
     state_db::{DesiredKey, DesiredService},
@@ -183,17 +184,19 @@ async fn create_service(
     if let Some(cached) = &previous {
         let mut cached_endpoints = cached.endpoints.clone();
         cached_endpoints.extend(cached.disabled_endpoints.clone());
-        let has_reservations =
-            cached_endpoints.iter().any(|endpoint| endpoint.reservation.is_some());
         let same_remote =
             cached.remotes == request_remotes && cached.default_remote == request_default_remote;
-        if !restore_reservations(&mut endpoints, &cached_endpoints)
-            || (has_reservations && !same_remote)
-        {
-            return Err(ApiError::conflict(
-                "stopped service configuration changed; run down --forget first",
-            ));
-        }
+        // A changed remote invalidates every reservation, since each belongs to the relay that
+        // issued it.
+        let orphans = if same_remote {
+            restore_reservations(&mut endpoints, &cached_endpoints)
+        } else {
+            for endpoint in &mut endpoints {
+                endpoint.reservation = None;
+            }
+            cached_endpoints.into_iter().filter(|endpoint| endpoint.reservation.is_some()).collect()
+        };
+        release_reservations(&state, cached, orphans).await;
     }
     let desired = DesiredService {
         active: true,

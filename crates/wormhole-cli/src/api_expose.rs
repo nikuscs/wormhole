@@ -26,7 +26,14 @@ pub fn failure_message(endpoints: &[ActiveEndpoint]) -> String {
     }
 }
 
-pub fn restore_reservations(endpoints: &mut [EndpointSpec], cached: &[EndpointSpec]) -> bool {
+/// Reattaches cached reservations to matching endpoints, returning those left unclaimed.
+///
+/// An unclaimed reservation belongs to a label the caller no longer asks for, so it is the
+/// caller's to release rather than to preserve.
+pub fn restore_reservations(
+    endpoints: &mut [EndpointSpec],
+    cached: &[EndpointSpec],
+) -> Vec<EndpointSpec> {
     let mut cached = cached
         .iter()
         .filter(|endpoint| endpoint.reservation.is_some())
@@ -44,7 +51,39 @@ pub fn restore_reservations(endpoints: &mut [EndpointSpec], cached: &[EndpointSp
             }
         }
     }
-    cached.is_empty()
+    cached
+}
+
+/// Releases reservations the caller no longer wants, so a renamed label is not blocked by its
+/// predecessor.
+///
+/// Releasing is a relay operation, so each orphan is briefly rebound against its original remote
+/// and then closed with forget. Failure is not fatal: the new endpoint is unaffected, and only a
+/// stale reservation is left behind.
+pub async fn release_reservations(
+    state: &ApiState,
+    cached: &DesiredService,
+    orphans: Vec<EndpointSpec>,
+) {
+    if orphans.is_empty() {
+        return;
+    }
+    let mut retry = cached.clone();
+    retry.endpoints = orphans;
+    retry.disabled_endpoints = Vec::new();
+    let ids = match expose_desired(state, &retry).await {
+        Ok(ids) => ids,
+        Err(error) => {
+            tracing::warn!(%error, "releasing a superseded reservation failed");
+            return;
+        }
+    };
+    let _ready = wait_ready(&state.manager, &ids).await;
+    for id in ids {
+        if let Err(error) = state.manager.close_with_forget(id, true).await {
+            tracing::warn!(%error, "releasing a superseded reservation failed");
+        }
+    }
 }
 
 fn equivalent_for_restore(endpoint: &EndpointSpec, candidate: &EndpointSpec) -> bool {
