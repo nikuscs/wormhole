@@ -42,6 +42,9 @@ jobs:
           sudo apt-get install -y clang cmake
           cargo install cargo-deny --locked
           cargo install cargo-audit --locked
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-about@0.9.1
       - uses: Swatinem/rust-cache@v2
       - name: Check version calculation without writes
         run: scripts/test-release-version.sh
@@ -51,6 +54,8 @@ jobs:
         run: cargo clippy --all-targets --locked -- -D warnings
       - name: Test
         run: cargo test --workspace --locked
+      - name: Third-party notices
+        run: make notices-check
       - name: Dependency policy
         run: cargo deny check
       - name: Security audit
@@ -110,40 +115,7 @@ jobs:
         env:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
-          python3 - <<'PY'
-          import datetime
-          import json
-          import os
-          import re
-          from pathlib import Path
-
-          version = os.environ["VERSION"]
-          cargo = Path("Cargo.toml")
-          cargo.write_text(re.sub(r'(?m)^version = "[^"]+"$', f'version = "{version}"', cargo.read_text(), count=1))
-          changelog = Path("CHANGELOG.md")
-          text = changelog.read_text()
-          heading = f"## [Unreleased]\n\n## [{version}] - {datetime.date.today().isoformat()}"
-          text = text.replace("## [Unreleased]", heading, 1)
-          text = re.sub(
-              r"(?m)^\[Unreleased\]: .*$",
-              f"[Unreleased]: https://github.com/nikuscs/wormhole/compare/v{version}...HEAD",
-              text,
-              count=1,
-          )
-          link = f"[{version}]: https://github.com/nikuscs/wormhole/releases/tag/v{version}"
-          if link not in text:
-              text = text.rstrip() + f"\n{link}\n"
-          changelog.write_text(text)
-
-          for relative in (
-              "crates/wormhole-cli/tests/fixtures/local-api.openapi.json",
-              "crates/wormholed/tests/fixtures/admin-api.openapi.json",
-          ):
-              fixture = Path(relative)
-              document = json.loads(fixture.read_text())
-              document["info"]["version"] = version
-              fixture.write_text(json.dumps(document, indent=2) + "\n")
-          PY
+          scripts/update-release-files.sh "$VERSION"
           cargo check --workspace
           test "$(cargo metadata --no-deps --format-version 1 | jq -r '[.packages[].version] | unique | join(" ")')" = "$VERSION"
       - name: Commit and tag
@@ -337,7 +309,7 @@ jobs:
           install -m 0755 scripts/wormholed-bootstrap.sh target/distrib/wormholed-bootstrap.sh
           npm ci --prefix crates/wormholed-cloudflare
           npm run build --prefix crates/wormholed-cloudflare
-          python3 scripts/package-cloudflare-worker.py \
+          scripts/package-cloudflare-worker.sh \
             --version "${{ needs.prepare.outputs.version }}" --output-dir target/distrib
           {
             echo "paths<<EOF"

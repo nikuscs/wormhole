@@ -40,17 +40,20 @@ cloudflare-semantics:
 	scripts/test-cloudflare-semantics.sh "$(CF_REMOTE)" "$(CF_DOMAIN)"
 
 shell:
-	shellcheck scripts/release-local.sh scripts/wormholed-bootstrap.sh scripts/test-wormholed-bootstrap.sh scripts/test-cloudflare-semantics.sh
-	python3 -m py_compile scripts/add-release-legal-files.py scripts/cloudflare-semantics-server.py scripts/cloudflare-websocket-client.py scripts/generate-homebrew-formula.py scripts/generate-release-notes.py scripts/generate-third-party-notices.py scripts/package-cloudflare-worker.py
+	shellcheck scripts/*.sh
+	python3 -m py_compile tests/cloudflare/semantics_server.py tests/cloudflare/websocket_client.py
 	cargo build -p wormholed --locked
 	WORMHOLE_TEST_REAL_BINARY=target/debug/wormholed scripts/test-wormholed-bootstrap.sh
 
 notices:
-	scripts/generate-third-party-notices.py --output THIRD_PARTY_NOTICES
+	@tmp=$$(mktemp); trap 'rm -f "$$tmp"' EXIT; \
+		cargo about generate --workspace --locked --fail --output-file "$$tmp" about.hbs; \
+		sed 's/[[:space:]]*$$//' "$$tmp" > THIRD_PARTY_NOTICES
 
 notices-check:
-	@tmp=$$(mktemp); trap 'rm -f "$$tmp"' EXIT; \
-		scripts/generate-third-party-notices.py --output "$$tmp"; \
+	@raw=$$(mktemp); tmp=$$(mktemp); trap 'rm -f "$$raw" "$$tmp"' EXIT; \
+		cargo about generate --workspace --locked --fail --output-file "$$raw" about.hbs; \
+		sed 's/[[:space:]]*$$//' "$$raw" > "$$tmp"; \
 		cmp -s THIRD_PARTY_NOTICES "$$tmp" || { \
 			echo "THIRD_PARTY_NOTICES is stale; run make notices" >&2; exit 1; \
 		}

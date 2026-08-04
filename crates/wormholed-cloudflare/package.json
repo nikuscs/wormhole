@@ -3,7 +3,7 @@
   "private": true,
   "scripts": {
     "build": "worker-build --release",
-    "bundle": "npm run build && python3 ../../scripts/package-cloudflare-worker.py --version 0.0.0 --output-dir deploy-bundle",
+    "bundle": "npm run build && ../../scripts/package-cloudflare-worker.sh --version 0.0.0 --output-dir deploy-bundle",
     "check": "wrangler deploy --dry-run --outdir dist",
     "dev": "wrangler dev --local",
     "types": "wrangler types --include-runtime=false"

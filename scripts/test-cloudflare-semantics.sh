@@ -23,7 +23,7 @@ assert_equal() {
   fi
 }
 
-python3 "$ROOT/scripts/cloudflare-semantics-server.py" >"$TMP/port" 2>"$TMP/origin.log" &
+python3 "$ROOT/tests/cloudflare/semantics_server.py" >"$TMP/port" 2>"$TMP/origin.log" &
 ORIGIN_PID=$!
 for _ in {1..100}; do
   [[ -s "$TMP/port" ]] && break
@@ -77,7 +77,7 @@ for index in {1..24}; do
   parallel=$(cat "$TMP/parallel-$index")
   assert_equal "$parallel" "$index" "parallel request $index"
 done
-python3 "$ROOT/scripts/cloudflare-websocket-client.py" "${URL/https:/wss:}/websocket"
+python3 "$ROOT/tests/cloudflare/websocket_client.py" "${URL/https:/wss:}/websocket"
 if curl --fail --silent --show-error --max-time 20 "$URL/disconnect" >"$TMP/disconnect" 2>/dev/null; then
   disconnect_size=$(wc -c <"$TMP/disconnect" | tr -d ' ')
   assert_equal "$disconnect_size" "5" "truncated response"

@@ -10,6 +10,7 @@ current=$1
 bump=$2
 old_ifs=$IFS
 IFS=.
+# shellcheck disable=SC2086 # Intentional splitting on dots after replacing IFS.
 set -- $current
 IFS=$old_ifs
 [ "$#" -eq 3 ] || { echo "invalid version: $current" >&2; exit 2; }

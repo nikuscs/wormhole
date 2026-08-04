@@ -13,7 +13,7 @@ signed build recorded by `build`.
 Install and authenticate:
 
 - Rust 1.97 with `rustup`;
-- cargo-dist 0.32.0 as `dist`;
+- cargo-dist 0.32.0 as `dist` and cargo-about 0.9.1 as `cargo-about`;
 - Docker Desktop with `linux/arm64` and `linux/amd64` container support;
 - Node.js 24 and npm;
 - Xcode command-line tools, including `codesign` and `notarytool`;

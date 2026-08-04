@@ -39,7 +39,7 @@ jobs:
       - name: Source size
         run: make size
       - name: Shell scripts
-        run: shellcheck scripts/wormholed-bootstrap.sh scripts/test-wormholed-bootstrap.sh
+        run: shellcheck scripts/*.sh
       - name: Clippy
         run: cargo clippy --all-targets --locked -- -D warnings
       - name: Unit and integration tests
@@ -62,7 +62,8 @@ jobs:
           command: check
       - uses: taiki-e/install-action@v2
         with:
-          tool: cargo-audit
+          tool: cargo-about@0.9.1,cargo-audit
+      - run: make notices-check
       - run: cargo audit
 
   macos:

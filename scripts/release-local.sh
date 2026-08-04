@@ -68,46 +68,72 @@ release_dir() {
 
 update_release_files() {
     local worktree=$1 version=$2
-    VERSION="$version" WORKTREE="$worktree" python3 - <<'PY'
-import datetime
-import json
-import os
-import re
-from pathlib import Path
+    "$worktree/scripts/update-release-files.sh" "$version" "$worktree"
+}
 
-root = Path(os.environ["WORKTREE"])
-version = os.environ["VERSION"]
-cargo = root / "Cargo.toml"
-cargo.write_text(
-    re.sub(r'(?m)^version = "[^"]+"$', f'version = "{version}"', cargo.read_text(), count=1)
-)
+changelog_section() {
+    local version=$1 changelog=$2
+    awk -v version="$version" '
+        $0 == "## [" version "]" || index($0, "## [" version "] - ") == 1 {
+            found = 1
+            next
+        }
+        found && /^## \[/ { exit }
+        found {
+            if ($0 == "") {
+                blanks++
+            } else {
+                while (blanks > 0) { print ""; blanks-- }
+                print
+            }
+        }
+        END { if (!found) exit 2 }
+    ' "$changelog"
+}
 
-changelog = root / "CHANGELOG.md"
-text = changelog.read_text()
-heading = f"## [Unreleased]\n\n## [{version}] - {datetime.date.today().isoformat()}"
-if "## [Unreleased]" not in text:
-    raise SystemExit("CHANGELOG.md has no Unreleased heading")
-text = text.replace("## [Unreleased]", heading, 1)
-text = re.sub(
-    r"(?m)^\[Unreleased\]: .*$",
-    f"[Unreleased]: https://github.com/nikuscs/wormhole/compare/v{version}...HEAD",
-    text,
-    count=1,
-)
-link = f"[{version}]: https://github.com/nikuscs/wormhole/releases/tag/v{version}"
-if link not in text:
-    text = text.rstrip() + f"\n{link}\n"
-changelog.write_text(text)
+generate_release_notes() {
+    local version=$1 changelog=$2 output=$3 highlights
+    highlights=$(changelog_section "$version" "$changelog") \
+        || fail "CHANGELOG.md has no section for $version"
+    [[ -n "$highlights" ]] || fail "CHANGELOG.md section for $version is empty"
+    local tag="v$version" release="https://github.com/nikuscs/wormhole/releases/download/v$version"
+    cat >"$output" <<EOF
+Secure tunnels for agents, automation, and worktrees—through your own relay, Tailscale, Cloudflare, or multiple providers at once.
 
-for relative in (
-    "crates/wormhole-cli/tests/fixtures/local-api.openapi.json",
-    "crates/wormholed/tests/fixtures/admin-api.openapi.json",
-):
-    fixture = root / relative
-    document = json.loads(fixture.read_text())
-    document["info"]["version"] = version
-    fixture.write_text(json.dumps(document, indent=2) + "\n")
-PY
+## Install
+
+### Homebrew
+
+\`\`\`sh
+brew install nikuscs/tap/wormhole
+\`\`\`
+
+### Installer
+
+\`\`\`sh
+curl --proto '=https' --tlsv1.2 -LsSf \\
+  $release/wormhole-cli-installer.sh | sh
+\`\`\`
+
+### Wormhole relay
+
+\`\`\`sh
+curl --proto '=https' --tlsv1.2 -LsSf \\
+  $release/wormholed-installer.sh | sh
+\`\`\`
+
+## Highlights
+
+$highlights
+
+## Downloads
+
+Prebuilt \`wormhole\` and \`wormholed\` binaries are available for macOS Apple Silicon and Intel,
+Linux ARM64 and x86_64, and Cloudflare Workers. macOS binaries are signed and notarized. Every
+artifact includes a SHA-256 checksum, the MIT license, and generated third-party notices.
+
+**Full changelog:** https://github.com/nikuscs/wormhole/commits/$tag
+EOF
 }
 
 run_gate() {
@@ -175,20 +201,6 @@ install_legal_files() {
     install -m 0644 "$worktree/LICENSE" "$worktree/target/distrib/LICENSE"
     install -m 0644 "$worktree/THIRD_PARTY_NOTICES" \
         "$worktree/target/distrib/THIRD_PARTY_NOTICES"
-}
-
-add_legal_files_to_target_archives() {
-    local worktree=$1 target=$2 archive found=0
-    local manifest="$worktree/target/distrib/${target}-dist-manifest.json"
-    for archive in "$worktree"/target/distrib/*-"$target".zip; do
-        [[ -f "$archive" ]] || continue
-        found=1
-        python3 "$worktree/scripts/add-release-legal-files.py" "$archive" \
-            --license-file "$worktree/LICENSE" \
-            --notices-file "$worktree/THIRD_PARTY_NOTICES"
-        update_archive_checksum "$archive" "$manifest"
-    done
-    [[ "$found" == 1 ]] || fail "no archives found for $target"
 }
 
 sign_and_notarize_archive() {
@@ -260,19 +272,11 @@ build_global_artifacts() {
         dist build --tag="$tag" --force-tag --artifacts=global --output-format=json \
             > global-dist-manifest.pending.json
         mv global-dist-manifest.pending.json target/distrib/global-dist-manifest.json
-        python3 scripts/add-release-legal-files.py target/distrib/source.tar.gz \
-            --license-file LICENSE --notices-file THIRD_PARTY_NOTICES
-        update_archive_checksum target/distrib/source.tar.gz \
-            target/distrib/global-dist-manifest.json
         install -m 0755 scripts/wormholed-bootstrap.sh target/distrib/wormholed-bootstrap.sh
         npm ci --prefix crates/wormholed-cloudflare
         npm run build --prefix crates/wormholed-cloudflare
-        python3 scripts/package-cloudflare-worker.py \
-            --version "$version" --output-dir target/distrib
-        python3 scripts/generate-release-notes.py \
-            --version "$version" --changelog CHANGELOG.md --output target/distrib/release-notes.md
-        python3 scripts/generate-homebrew-formula.py \
-            --version "$version" --artifacts target/distrib --output target/distrib/wormhole.rb
+        scripts/package-cloudflare-worker.sh --version "$version" --output-dir target/distrib
+        generate_release_notes "$version" CHANGELOG.md target/distrib/release-notes.md
     )
 }
 
@@ -285,31 +289,26 @@ verify_expected_artifacts() {
         done
     done
     for artifact in LICENSE THIRD_PARTY_NOTICES wormhole-cli-installer.sh wormholed-installer.sh \
-        wormhole-cli.rb wormholed.rb release-notes.md source.tar.gz source.tar.gz.sha256 \
-        wormhole.rb wormholed-bootstrap.sh wormholed-cloudflare-worker.tar.gz \
+        wormhole.rb wormholed.rb release-notes.md source.tar.gz source.tar.gz.sha256 \
+        wormholed-bootstrap.sh wormholed-cloudflare-worker.tar.gz \
         wormholed-cloudflare-worker.tar.gz.sha256; do
         [[ -f "$distrib/$artifact" ]] || fail "missing artifact: $artifact"
     done
-    python3 - "$distrib" <<'PY'
-import sys
-import tarfile
-import zipfile
-from pathlib import Path
-
-root = Path(sys.argv[1])
-required = {"LICENSE", "THIRD_PARTY_NOTICES"}
-for archive in root.glob("*.zip"):
-    with zipfile.ZipFile(archive) as bundle:
-        missing = required - set(bundle.namelist())
-    if missing:
-        raise SystemExit(f"{archive.name} is missing legal files: {sorted(missing)}")
-for name in ("source.tar.gz", "wormholed-cloudflare-worker.tar.gz"):
-    with tarfile.open(root / name, "r:gz") as bundle:
-        entries = {entry.name for entry in bundle.getmembers()}
-    missing = {item for item in required if not any(entry.endswith(f"/{item}") or entry == item for entry in entries)}
-    if missing:
-        raise SystemExit(f"{name} is missing legal files: {sorted(missing)}")
-PY
+    local archive legal listing
+    for archive in "$distrib"/*.zip; do
+        listing=$(unzip -Z1 "$archive")
+        for legal in LICENSE THIRD_PARTY_NOTICES; do
+            grep -Fxq "$legal" <<<"$listing" \
+                || fail "$(basename "$archive") is missing $legal"
+        done
+    done
+    for archive in "$distrib/source.tar.gz" "$distrib/wormholed-cloudflare-worker.tar.gz"; do
+        listing=$(tar -tzf "$archive")
+        for legal in LICENSE THIRD_PARTY_NOTICES; do
+            grep -Eq "(^|/)$legal$" <<<"$listing" \
+                || fail "$(basename "$archive") is missing $legal"
+        done
+    done
     local checksum
     for checksum in "$distrib"/*.sha256; do
         (cd "$distrib" && shasum -a 256 -c "$(basename "$checksum")")
@@ -361,12 +360,16 @@ build_release() {
     [[ "$bump" =~ ^(patch|minor|major)$ ]] || usage
 
     require_command cargo
+    require_command cargo-about
     require_command dist
     require_command docker
     require_command jq
     require_command npm
-    require_command python3
+    require_command perl
     require_command rustup
+    require_command shasum
+    require_command tar
+    require_command unzip
     require_command zip
     require_clean_main
     require_synced_main
@@ -420,7 +423,6 @@ build_release() {
     local target
     for target in "${MAC_TARGETS[@]}"; do
         build_macos_target "$worktree" "$tag" "$target"
-        add_legal_files_to_target_archives "$worktree" "$target"
         if [[ "$unsigned" == false ]]; then
             sign_macos_target "$worktree" "$target" "$profile"
         fi
@@ -429,7 +431,6 @@ build_release() {
     git_common=$(cd "$(git -C "$ROOT" rev-parse --git-common-dir)" && pwd)
     for target in "${LINUX_TARGETS[@]}"; do
         build_linux_target "$worktree" "$tag" "$target" "$git_common"
-        add_legal_files_to_target_archives "$worktree" "$target"
     done
     build_global_artifacts "$worktree" "$tag" "$version"
     verify_expected_artifacts "$worktree/target/distrib"
@@ -529,13 +530,19 @@ publish_release() {
     printf 'published %s\n' "$tag"
 }
 
-ROOT=$(repo_root)
-cd "$ROOT"
-[[ $# -ge 1 ]] || usage
-command=$1
-shift
-case "$command" in
-    build) build_release "$@" ;;
-    publish) publish_release "$@" ;;
-    *) usage ;;
-esac
+main() {
+    ROOT=$(repo_root)
+    cd "$ROOT"
+    [[ $# -ge 1 ]] || usage
+    local command=$1
+    shift
+    case "$command" in
+        build) build_release "$@" ;;
+        publish) publish_release "$@" ;;
+        *) usage ;;
+    esac
+}
+
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+    main "$@"
+fi
