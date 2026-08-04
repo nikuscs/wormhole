@@ -60,7 +60,7 @@ pub async fn execute(cli: &Cli, args: &RunArgs) -> Result<(), CliError> {
                 service,
                 endpoints: specs,
             };
-            let endpoints = client.create(&request).await?;
+            let endpoints = client.create_replacing(&request).await?;
             Ok((Some(client), None, endpoints))
         }
         .await
@@ -164,9 +164,11 @@ async fn wait_or_interrupt(
     let result = {
         let waiting = wait_for_child(child, proxy, expected, pid, started);
         tokio::pin!(waiting);
+        let shutdown = shutdown_signal();
+        tokio::pin!(shutdown);
         tokio::select! {
             result = &mut waiting => Some(result),
-            signal = tokio::signal::ctrl_c() => {
+            signal = &mut shutdown => {
                 if let Err(error) = signal {
                     return (Err(error.into()), false);
                 }
@@ -175,6 +177,28 @@ async fn wait_or_interrupt(
         }
     };
     result.map_or_else(|| (Ok(failure_status()), true), |result| (result, false))
+}
+
+/// Resolves on any signal a terminal or supervisor uses to end an attached command.
+///
+/// Ctrl-C is only one of them: a parent that absorbs the interrupt and exits leaves a `SIGHUP` or
+/// `SIGTERM`, and ignoring those strands the service registration behind.
+#[cfg(unix)]
+async fn shutdown_signal() -> Result<(), std::io::Error> {
+    use tokio::signal::unix::{SignalKind, signal};
+
+    let mut terminate = signal(SignalKind::terminate())?;
+    let mut hangup = signal(SignalKind::hangup())?;
+    tokio::select! {
+        result = tokio::signal::ctrl_c() => result,
+        _ = terminate.recv() => Ok(()),
+        _ = hangup.recv() => Ok(()),
+    }
+}
+
+#[cfg(not(unix))]
+async fn shutdown_signal() -> Result<(), std::io::Error> {
+    tokio::signal::ctrl_c().await
 }
 
 #[cfg(unix)]

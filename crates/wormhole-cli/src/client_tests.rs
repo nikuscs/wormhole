@@ -85,6 +85,108 @@ async fn typed_client_surfaces_structured_and_plain_api_errors() {
     assert_request(request, Method::DELETE, "/v1/requests").await;
 }
 
+#[tokio::test]
+async fn creating_a_service_supersedes_a_registration_that_outlived_its_command() {
+    let conflict = (
+        StatusCode::CONFLICT,
+        br#"{"error":{"code":"conflict","message":"service already exists: web"}}"#.as_slice(),
+    );
+    let (client, requests) = scripted_client(vec![
+        conflict,
+        (StatusCode::OK, br#"{"closed":true}"#.as_slice()),
+        (StatusCode::OK, b"[]".as_slice()),
+    ]);
+
+    assert!(client.create_replacing(&create_request()).await.expect("replace").is_empty());
+
+    let seen = requests.lock().await.clone();
+    assert_eq!(
+        seen,
+        vec![
+            (Method::POST, "/v1/services".to_owned()),
+            // Forgetting is deliberately off, so the handover keeps the public URL.
+            (Method::DELETE, "/v1/services/web?forget=0&project_id=project".to_owned()),
+            (Method::POST, "/v1/services".to_owned()),
+        ]
+    );
+}
+
+#[tokio::test]
+async fn creating_a_service_reports_an_unrelated_conflict_unchanged() {
+    let (client, requests) = scripted_client(vec![(
+        StatusCode::CONFLICT,
+        br#"{"error":{"code":"conflict","message":"port already bound"}}"#.as_slice(),
+    )]);
+
+    let error = client.create_replacing(&create_request()).await.expect_err("conflict");
+
+    assert!(matches!(error, ClientError::Api { status: StatusCode::CONFLICT, .. }));
+    assert_eq!(requests.lock().await.len(), 1);
+}
+
+fn create_request() -> crate::local_api::CreateServiceRequest {
+    crate::local_api::CreateServiceRequest {
+        project_id: Some("project".to_owned()),
+        remotes: None,
+        default_remote: None,
+        service: wormhole_core::Service {
+            name: "web".to_owned(),
+            target: wormhole_core::model::Target::Port(3000),
+            proto: wormhole_core::model::ServiceProto::Http,
+        },
+        endpoints: Vec::new(),
+    }
+}
+
+type RecordedRequests = Arc<Mutex<Vec<(Method, String)>>>;
+
+fn scripted_client(
+    responses: Vec<(StatusCode, &'static [u8])>,
+) -> (DaemonClient, RecordedRequests) {
+    let directory = tempfile::tempdir().expect("tempdir").keep();
+    let state_dir = camino::Utf8PathBuf::from_path_buf(directory).expect("UTF-8 path");
+    let paths = RuntimePaths {
+        socket: state_dir.join("daemon.sock"),
+        lock: state_dir.join("daemon.lock"),
+        token: state_dir.join("api-token"),
+        log: state_dir.join("daemon.log"),
+        state_dir,
+    };
+    let listener = UnixListener::bind(&paths.socket).expect("listener");
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let recorded = Arc::clone(&seen);
+    let remaining =
+        Arc::new(Mutex::new(responses.into_iter().collect::<std::collections::VecDeque<_>>()));
+    tokio::spawn(async move {
+        while let Ok((stream, _)) = listener.accept().await {
+            let recorded = Arc::clone(&recorded);
+            let remaining = Arc::clone(&remaining);
+            let service = service_fn(move |request: hyper::Request<hyper::body::Incoming>| {
+                let recorded = Arc::clone(&recorded);
+                let remaining = Arc::clone(&remaining);
+                async move {
+                    recorded
+                        .lock()
+                        .await
+                        .push((request.method().clone(), request.uri().to_string()));
+                    let (status, body) =
+                        remaining.lock().await.pop_front().expect("scripted response");
+                    Ok::<_, Infallible>(
+                        Response::builder()
+                            .status(status)
+                            .body(Full::new(Bytes::from_static(body)))
+                            .expect("response"),
+                    )
+                }
+            });
+            let _served = hyper::server::conn::http1::Builder::new()
+                .serve_connection(TokioIo::new(stream), service)
+                .await;
+        }
+    });
+    (DaemonClient { paths, token: "test-token".to_owned() }, seen)
+}
+
 fn mock_client(
     status: StatusCode,
     body: &'static [u8],

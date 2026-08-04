@@ -88,6 +88,27 @@ impl DaemonClient {
         self.json(Method::POST, "/v1/services", Some(request)).await
     }
 
+    /// Creates a service, superseding an identically named one that is still registered.
+    ///
+    /// An attached command owns its service for as long as it runs, so restarting it must not be
+    /// blocked by a predecessor that never deregistered, such as one orphaned by a signal its
+    /// parent absorbed. Reservations are kept so the public URL survives the handover.
+    pub async fn create_replacing(
+        &self,
+        request: &CreateServiceRequest,
+    ) -> Result<Vec<ActiveEndpoint>, ClientError> {
+        match self.create(request).await {
+            Err(ClientError::Api { status, message })
+                if status == StatusCode::CONFLICT && message.contains("service already exists") =>
+            {
+                self.delete_service(&request.service.name, request.project_id.as_deref(), false)
+                    .await?;
+                self.create(request).await
+            }
+            result => result,
+        }
+    }
+
     pub async fn delete_service(
         &self,
         name: &str,
