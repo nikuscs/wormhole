@@ -7,6 +7,8 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-08-04
+
 ### Added
 
 - Framework-aware public URL environment aliases for Next.js, Nuxt, SvelteKit, Astro, Rsbuild,
@@ -39,5 +41,6 @@ brew install nikuscs/tap/wormhole
 - Strict Ed25519 identities, bounded protocol frames and mux queues, per-key quotas, hardened TLS,
   Unix-socket administration, secure state permissions, and provider ownership checks.
 
-[Unreleased]: https://github.com/nikuscs/wormhole/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/nikuscs/wormhole/compare/v0.1.1...HEAD
 [0.1.0]: https://github.com/nikuscs/wormhole/releases/tag/v0.1.0
+[0.1.1]: https://github.com/nikuscs/wormhole/releases/tag/v0.1.1

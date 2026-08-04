@@ -4408,7 +4408,7 @@ dependencies = [
 
 [[package]]
 name = "wormhole-cli"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "assert_cmd",
@@ -4460,7 +4460,7 @@ dependencies = [
 
 [[package]]
 name = "wormhole-core"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "async-trait",
  "base64 0.23.0",
@@ -4508,7 +4508,7 @@ dependencies = [
 
 [[package]]
 name = "wormhole-e2e"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "bytes",
  "camino",
@@ -4532,7 +4532,7 @@ dependencies = [
 
 [[package]]
 name = "wormhole-proto"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "base64 0.23.0",
  "bytes",
@@ -4558,7 +4558,7 @@ dependencies = [
 
 [[package]]
 name = "wormholed"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "argon2",
@@ -4610,7 +4610,7 @@ dependencies = [
 
 [[package]]
 name = "wormholed-cloudflare"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "base64 0.23.0",
  "futures",
