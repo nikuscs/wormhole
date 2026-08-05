@@ -21,6 +21,7 @@ use crate::{
 
 const INITIAL_BACKOFF: Duration = Duration::from_millis(250);
 const MAX_BACKOFF: Duration = Duration::from_secs(30);
+const STARTUP_MAX_BACKOFF: Duration = Duration::from_secs(2);
 const TEMPORARY_ATTEMPTS: u32 = 5;
 
 /// Wormhole protocol driver sharing one QUIC connection per named remote.
@@ -99,6 +100,7 @@ impl WormholeDriver {
         let persistent = spec.persist == Persistence::Persistent;
         let mut attempts = 0_u32;
         let mut backoff = INITIAL_BACKOFF;
+        let mut established = false;
         loop {
             if stop.is_cancelled() {
                 return self.stop_endpoint(&remote, &spec, target, &events, &forget).await;
@@ -116,6 +118,7 @@ impl WormholeDriver {
                     Ok(mut lease) => {
                         attempts = 0;
                         backoff = INITIAL_BACKOFF;
+                        established = true;
                         spec.reservation = lease.reservation;
                         tokio::select! {
                             () = stop.cancelled() => {
@@ -161,7 +164,11 @@ impl WormholeDriver {
                 }
                 () = tokio::time::sleep(Duration::from_millis(jitter)) => {}
             }
-            backoff = backoff.saturating_mul(2).min(MAX_BACKOFF);
+            // Before the first success the caller is still waiting on a startup deadline, and a
+            // just-released hostname usually frees within seconds. Backing off by tens of seconds
+            // there turns a transient collision into a failed startup, so keep early retries brisk.
+            let ceiling = if established { MAX_BACKOFF } else { STARTUP_MAX_BACKOFF };
+            backoff = backoff.saturating_mul(2).min(ceiling);
         }
     }
 

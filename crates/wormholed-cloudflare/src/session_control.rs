@@ -7,16 +7,17 @@ use wormhole_proto::frames::{
 use wormhole_proto::{PublicKeyRef, verify_challenge};
 
 use super::{
-    MAX_BINDS, MAX_STREAMS, Runtime, SocketAttachment, bind_error, close_protocol, control_domain,
-    deny, invite_digest, parse_uuid, protocol_error, relay_domain, retire_connection, secure_uuid,
-    send_control, session_connection, socket_attachment, valid_label,
+    MAX_BINDS, MAX_STREAMS, Runtime, SocketAttachment, bind_error, close_protocol,
+    connection_is_live, control_domain, deny, invite_digest, parse_uuid, protocol_error,
+    relay_domain, secure_uuid, send_control, session_connections, socket_attachment,
 };
+/// One day of inactivity, which spans an overnight gap without ageing out a live worktree.
+const DEFAULT_IDLE_TTL_SECONDS: i64 = 24 * 60 * 60;
+
 use crate::{
     admin, edge_auth,
-    storage::{self, AuthRow, BindRow},
+    storage::{self, AuthRow},
 };
-
-const GENERATED_ATTEMPTS: usize = 64;
 
 pub fn handle_control(
     state: &State,
@@ -40,9 +41,13 @@ pub fn handle_control(
             }
             _ => close_protocol(ws, "expected authentication proof"),
         },
-        SocketAttachment::Authenticated { fingerprint } => {
-            control_authenticated(env, runtime, &sql, ws, connection, &fingerprint, frame)
-        }
+        SocketAttachment::Authenticated { fingerprint } => control_authenticated(
+            &Control { state, env, runtime, sql: &sql },
+            ws,
+            connection,
+            &fingerprint,
+            frame,
+        ),
         SocketAttachment::Retired => close_protocol(ws, "session was superseded"),
     }
 }
@@ -103,23 +108,23 @@ fn authenticate(
         None if !redeem(sql, auth, &fingerprint)? => return deny(ws, DenyReason::UnknownKey),
         None => {}
     }
-    if let Some(previous) = session_connection(sql, &fingerprint)?
-        && previous != connection
-    {
-        retire_connection(state, &previous)?;
+    // One key runs many tunnels at once: parallel worktrees are the point of the tool. Retiring
+    // sibling connections here would make them evict each other forever, so only connections that
+    // have actually gone away are cleaned up.
+    for previous in session_connections(sql, &fingerprint)? {
+        if previous == connection || connection_is_live(state, &previous) {
+            continue;
+        }
         runtime.borrow_mut().invalidate_connection(&previous);
+        retire_session(sql, &previous)?;
+    }
+    // Every connection pays for a small sweep, which keeps abandoned worktree reservations from
+    // accumulating without a scheduled job or any extra Worker invocation.
+    if let Some(cutoff) = idle_cutoff(env)? {
+        storage::sweep_idle_binds(sql, &fingerprint, cutoff)?;
     }
     runtime.borrow_mut().invalidate_fingerprint(&fingerprint);
     sql.exec("DELETE FROM pending_auth WHERE connection_id=?", vec![connection.into()])?;
-    sql.exec(
-        "DELETE FROM binds WHERE fingerprint=? AND persistent=0",
-        vec![fingerprint.as_str().into()],
-    )?;
-    sql.exec(
-        "UPDATE binds SET connection_id=NULL,state='offline' WHERE fingerprint=? AND persistent=1",
-        vec![fingerprint.as_str().into()],
-    )?;
-    sql.exec("DELETE FROM sessions WHERE fingerprint=?", vec![fingerprint.as_str().into()])?;
     sql.exec(
         "INSERT OR REPLACE INTO sessions(connection_id,fingerprint,connected_at) VALUES(?,?,?)",
         vec![connection.into(), fingerprint.as_str().into(), admin::now_seconds().into()],
@@ -137,6 +142,20 @@ fn authenticate(
     )
 }
 
+/// Timestamp before which an unused reservation is abandoned, or `None` when ageing is disabled.
+///
+/// `BIND_IDLE_TTL_SECONDS` is read per deployment so an operator can lengthen, shorten, or switch
+/// the behaviour off with `0` without shipping new code.
+fn idle_cutoff(env: &Env) -> Result<Option<i64>> {
+    let ttl = env
+        .var("BIND_IDLE_TTL_SECONDS")
+        .ok()
+        .map(|value| value.to_string())
+        .map_or(Ok(DEFAULT_IDLE_TTL_SECONDS), |value| value.trim().parse::<i64>())
+        .map_err(protocol_error)?;
+    Ok(cutoff_from_ttl(ttl, admin::now_seconds()))
+}
+
 fn redeem(sql: &SqlStorage, auth: &AuthRow, fingerprint: &str) -> Result<bool> {
     let (Some(id), Some(digest)) = (&auth.invite_id, &auth.invite_sha256) else { return Ok(false) };
     let now = admin::now_seconds();
@@ -147,18 +166,24 @@ fn redeem(sql: &SqlStorage, auth: &AuthRow, fingerprint: &str) -> Result<bool> {
     Ok(cursor.rows_written() > 0)
 }
 
+struct Control<'a> {
+    state: &'a State,
+    env: &'a Env,
+    runtime: &'a RefCell<Runtime>,
+    sql: &'a SqlStorage,
+}
+
 fn control_authenticated(
-    env: &Env,
-    runtime: &RefCell<Runtime>,
-    sql: &SqlStorage,
+    control: &Control<'_>,
     ws: &WebSocket,
     connection: &str,
     fingerprint: &str,
     frame: ControlFrame,
 ) -> Result<()> {
+    let Control { runtime, sql, .. } = *control;
     match frame {
         ControlFrame::Bind { request, spec, reservation } => {
-            bind(env, runtime, sql, ws, connection, fingerprint, (request, spec, reservation))
+            bind(control, ws, connection, fingerprint, (request, spec, reservation))
         }
         ControlFrame::BindReady { bind } => activate(runtime, sql, ws, connection, bind),
         ControlFrame::Unbind { bind, forget } => {
@@ -173,14 +198,13 @@ fn control_authenticated(
 }
 
 fn bind(
-    env: &Env,
-    runtime: &RefCell<Runtime>,
-    sql: &SqlStorage,
+    control: &Control<'_>,
     ws: &WebSocket,
     connection: &str,
     fingerprint: &str,
     details: (uuid::Uuid, BindSpec, Option<uuid::Uuid>),
 ) -> Result<()> {
+    let Control { state, env, runtime, sql } = *control;
     let (request, spec, reservation) = details;
     let BindSpec::Http { host, auto_host, domain, persist, buffer, auth } = spec else {
         return bind_error(ws, request, "raw TCP binds are unsupported by the Cloudflare relay");
@@ -203,9 +227,7 @@ fn bind(
             return bind_error(ws, request, "bind limit reached");
         }
         let Some(row) = create_bind(
-            sql,
-            connection,
-            fingerprint,
+            &Owner { state, sql, connection, fingerprint },
             (host.as_deref(), auto_host),
             &relay_domain,
             persist,
@@ -235,82 +257,6 @@ fn bind(
     )
 }
 
-fn create_bind(
-    sql: &SqlStorage,
-    connection: &str,
-    fingerprint: &str,
-    requested_host: (Option<&str>, bool),
-    domain: &str,
-    persist: Persistence,
-    verifier: &edge_auth::Verifier,
-) -> Result<Option<BindRow>> {
-    let (host, auto_host) = requested_host;
-    if host.is_some_and(|host| !valid_label(host)) {
-        return Err(protocol_error("invalid hostname label"));
-    }
-    let attempts = if host.is_some() && !auto_host { 1 } else { GENERATED_ATTEMPTS };
-    for attempt in 0..attempts {
-        let label = candidate_label(host, attempt)?;
-        let hostname = format!("{label}.{domain}");
-        let bind = secure_uuid()?.to_string();
-        let reservation = (persist == Persistence::Persistent)
-            .then(secure_uuid)
-            .transpose()?
-            .map(|id| id.to_string());
-        let cursor = sql.exec(
-            "INSERT OR IGNORE INTO binds(bind_id,reservation,fingerprint,hostname,persistent,connection_id,state,created_at,basic_hmac,bearer_hmac,link_hmac_key) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
-            vec![
-                bind.as_str().into(),
-                reservation.as_deref().into(),
-                fingerprint.into(),
-                hostname.as_str().into(),
-                i64::from(persist == Persistence::Persistent).into(),
-                connection.into(),
-                "pending".into(),
-                admin::now_seconds().into(),
-                verifier.basic_hmac.as_deref().into(),
-                verifier.bearer_hmac.as_deref().into(),
-                verifier.link_hmac_key.as_deref().into(),
-            ],
-        )?;
-        if cursor.rows_written() > 0 {
-            return storage::bind_by_id(sql, &bind);
-        }
-    }
-    Ok(None)
-}
-
-fn candidate_label(host: Option<&str>, attempt: usize) -> Result<String> {
-    match (host, attempt) {
-        (Some(host), 0) => Ok(host.to_owned()),
-        (Some(host), _) => {
-            let prefix = host.get(..56).unwrap_or(host).trim_end_matches('-');
-            let suffix = &secure_uuid()?.simple().to_string()[..6];
-            Ok(format!("{prefix}-{suffix}"))
-        }
-        (None, _) => Ok(format!("wh-{}", &secure_uuid()?.simple().to_string()[..12])),
-    }
-}
-
-fn reclaim(
-    sql: &SqlStorage,
-    connection: &str,
-    fingerprint: &str,
-    reservation: uuid::Uuid,
-) -> Result<BindRow> {
-    let reservation = reservation.to_string();
-    let row = storage::bind_by_reservation(sql, &reservation)?
-        .ok_or_else(|| protocol_error("unknown reservation"))?;
-    if row.fingerprint != fingerprint || row.state == "online" {
-        return Err(protocol_error("reservation is unavailable"));
-    }
-    sql.exec(
-        "UPDATE binds SET connection_id=?,state='pending' WHERE bind_id=?",
-        vec![connection.into(), row.bind_id.as_str().into()],
-    )?;
-    storage::bind_by_id(sql, &row.bind_id)?.ok_or_else(|| protocol_error("reclaimed bind missing"))
-}
-
 fn activate(
     runtime: &RefCell<Runtime>,
     sql: &SqlStorage,
@@ -319,8 +265,8 @@ fn activate(
     bind: uuid::Uuid,
 ) -> Result<()> {
     let cursor = sql.exec(
-        "UPDATE binds SET state='online' WHERE bind_id=? AND connection_id=? AND state='pending'",
-        vec![bind.to_string().into(), connection.into()],
+        "UPDATE binds SET state='online',last_active_at=? WHERE bind_id=? AND connection_id=? AND state='pending'",
+        vec![admin::now_seconds().into(), bind.to_string().into(), connection.into()],
     )?;
     if cursor.rows_written() != 1 {
         return close_protocol(ws, "bind cannot be activated");
@@ -346,8 +292,8 @@ fn unbind(
     runtime.borrow_mut().invalidate_bind(&row.bind_id);
     if row.persistent != 0 && !forget {
         sql.exec(
-            "UPDATE binds SET connection_id=NULL,state='offline' WHERE bind_id=?",
-            vec![bind.to_string().into()],
+            "UPDATE binds SET connection_id=NULL,state='offline',last_active_at=? WHERE bind_id=?",
+            vec![admin::now_seconds().into(), bind.to_string().into()],
         )?;
     } else {
         sql.exec("DELETE FROM binds WHERE bind_id=?", vec![bind.to_string().into()])?;
@@ -370,3 +316,7 @@ fn forget(
     )?;
     send_control(ws, &ControlFrame::ForgotReservation { reservation })
 }
+
+#[path = "session_bind.rs"]
+mod bind_storage;
+use bind_storage::{Owner, create_bind, cutoff_from_ttl, reclaim, retire_session};

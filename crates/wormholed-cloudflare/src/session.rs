@@ -32,7 +32,9 @@ use helpers::{
 };
 pub use runtime_state::Runtime;
 use runtime_state::{PendingHttp, SocketAttachment};
-use socket::{connection_id, retire_connection, session_connection, socket_attachment, socket_for};
+use socket::{
+    connection_id, connection_is_live, session_connections, socket_attachment, socket_for,
+};
 
 enum ForwardTarget {
     Ready { bind: Box<storage::BindRow>, connection: String, socket: WebSocket },
@@ -358,7 +360,7 @@ pub fn closed(state: &State, runtime: &RefCell<Runtime>, ws: &WebSocket) -> Resu
 fn mark_connection_offline(sql: &SqlStorage, connection: &str) -> Result<()> {
     sql.exec("DELETE FROM sessions WHERE connection_id=?", vec![connection.into()])?;
     sql.exec("DELETE FROM binds WHERE connection_id=? AND persistent=0", vec![connection.into()])?;
-    sql.exec("UPDATE binds SET connection_id=NULL,state='offline' WHERE connection_id=? AND persistent=1", vec![connection.into()])?;
+    sql.exec("UPDATE binds SET connection_id=NULL,state='offline',last_active_at=? WHERE connection_id=? AND persistent=1", vec![crate::admin::now_seconds().into(), connection.into()])?;
     Ok(())
 }
 

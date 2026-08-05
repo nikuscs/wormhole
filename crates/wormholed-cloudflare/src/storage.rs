@@ -26,12 +26,21 @@ CREATE TABLE IF NOT EXISTS binds (
   bind_id TEXT PRIMARY KEY, reservation TEXT UNIQUE, fingerprint TEXT NOT NULL,
   hostname TEXT NOT NULL UNIQUE, persistent INTEGER NOT NULL,
   connection_id TEXT, state TEXT NOT NULL, created_at INTEGER NOT NULL,
+  last_active_at INTEGER NOT NULL DEFAULT 0,
   basic_hmac TEXT, bearer_hmac TEXT, link_hmac_key TEXT
 );
 CREATE INDEX IF NOT EXISTS binds_fingerprint ON binds(fingerprint);
 CREATE INDEX IF NOT EXISTS binds_connection ON binds(connection_id);
+CREATE INDEX IF NOT EXISTS binds_idle ON binds(state,last_active_at);
 CREATE INDEX IF NOT EXISTS sessions_fingerprint ON sessions(fingerprint);
 ";
+
+/// Columns added after the first release, applied to objects created before them.
+///
+/// `SQLite` cannot express `ADD COLUMN IF NOT EXISTS`, so each entry is checked against
+/// `pragma_table_info` and added only when absent.
+const ADDED_COLUMNS: [(&str, &str, &str); 1] =
+    [("binds", "last_active_at", "INTEGER NOT NULL DEFAULT 0")];
 
 #[derive(Debug, Deserialize)]
 pub struct KeyRow {
@@ -80,6 +89,44 @@ pub struct InviteRow {
 
 pub fn initialize(sql: &SqlStorage) -> Result<()> {
     let _cursor = sql.exec(SCHEMA, None)?;
+    for (table, column, definition) in ADDED_COLUMNS {
+        if column_exists(sql, table, column)? {
+            continue;
+        }
+        let _added =
+            sql.exec(&format!("ALTER TABLE {table} ADD COLUMN {column} {definition}"), None)?;
+        // Existing rows have no activity history, so treat their creation as their last activity
+        // rather than sweeping them on the next connection.
+        let _backfilled =
+            sql.exec(&format!("UPDATE {table} SET {column}=created_at WHERE {column}=0"), None)?;
+    }
+    Ok(())
+}
+
+fn column_exists(sql: &SqlStorage, table: &str, column: &str) -> Result<bool> {
+    #[derive(Deserialize)]
+    struct Column {
+        name: String,
+    }
+    // The table name is interpolated because a pragma function will not accept a bound parameter.
+    // Both arguments come from `ADDED_COLUMNS`, never from a request.
+    Ok(sql
+        .exec(&format!("SELECT name FROM pragma_table_info('{table}')"), None)?
+        .to_array::<Column>()?
+        .iter()
+        .any(|entry| entry.name == column))
+}
+
+/// Deletes persistent binds their owner has not used for `ttl_seconds`.
+///
+/// A reservation exists to keep one URL stable, not to hold a name forever. Only offline binds age
+/// out, so a tunnel that is currently serving is never swept however old it is.
+pub fn sweep_idle_binds(sql: &SqlStorage, fingerprint: &str, cutoff: i64) -> Result<()> {
+    let _cursor = sql
+        .exec(
+            "DELETE FROM binds WHERE fingerprint=? AND persistent=1 AND state='offline' AND last_active_at<?",
+        vec![fingerprint.into(), cutoff.into()],
+    )?;
     Ok(())
 }
 

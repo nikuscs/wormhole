@@ -36,7 +36,7 @@ fn session_fingerprint(sql: &SqlStorage, connection: &str) -> Result<Option<Stri
         .map(|row| row.fingerprint))
 }
 
-pub(super) fn session_connection(sql: &SqlStorage, fingerprint: &str) -> Result<Option<String>> {
+pub(super) fn session_connections(sql: &SqlStorage, fingerprint: &str) -> Result<Vec<String>> {
     #[derive(Deserialize)]
     struct Row {
         connection_id: String,
@@ -45,16 +45,16 @@ pub(super) fn session_connection(sql: &SqlStorage, fingerprint: &str) -> Result<
         .exec("SELECT connection_id FROM sessions WHERE fingerprint=?", vec![fingerprint.into()])?
         .to_array::<Row>()?
         .into_iter()
-        .next()
-        .map(|row| row.connection_id))
+        .map(|row| row.connection_id)
+        .collect())
 }
 
-pub(super) fn retire_connection(state: &State, connection: &str) -> Result<()> {
-    let Some(socket) = socket_for(state, connection) else {
-        return Ok(());
-    };
-    socket.serialize_attachment(SocketAttachment::Retired)?;
-    socket.close(Some(1008), Some("superseded by a newer session"))
+/// Whether a recorded connection still has a live socket.
+///
+/// A connection whose socket is gone left its rows behind, and those rows must not keep owning
+/// hostnames or count as a live session.
+pub(super) fn connection_is_live(state: &State, connection: &str) -> bool {
+    socket_for(state, connection).is_some()
 }
 
 pub(super) fn connection_id(state: &State, ws: &WebSocket) -> Result<String> {
