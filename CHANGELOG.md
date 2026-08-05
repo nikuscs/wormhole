@@ -7,6 +7,35 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- `name` templates in `wormhole.toml` accepting `{repo}`, `{branch}`, `{service}`, `{dir}`, and
+  `{worktree}`, where `{branch}` or `{service}` suppresses the matching automatic suffix.
+- Idle persistent binds are released after `BIND_IDLE_TTL_SECONDS` on the Cloudflare relay,
+  defaulting to a day and disabled with `0`, so abandoned worktree reservations do not accumulate.
+
+### Changed
+
+- Service names derive from the Git repository rather than `package.json`, with the subdirectory
+  appended so packages in a monorepo stay distinct. Existing generated hostnames change.
+- `wormhole.toml` is discovered from the current directory upwards to the repository root, so every
+  package in a monorepo inherits one project configuration.
+
+### Fixed
+
+- `wormhole.toml` `name` was never read, because a document was parsed as a bare TOML value, so
+  every project silently fell back to its `package.json` name.
+- A hostname held by a bind whose connection had vanished could never be reclaimed, and the client
+  received a suffixed hostname instead, breaking OAuth redirects and webhooks configured against it.
+- Concurrent tunnels sharing one client key evicted each other's connections, leaving parallel
+  worktrees permanently reconnecting.
+- `wormhole run` now exits cleanly on `SIGTERM` and `SIGHUP` as well as an interrupt, and supersedes
+  a registration left behind by a predecessor instead of refusing to start.
+- Restarting a stopped service under a different hostname releases the superseded reservation
+  instead of failing until `down --forget` is run by hand.
+- Reconnect backoff no longer grows to tens of seconds before a first connection succeeds, which
+  turned a hostname released moments earlier into a failed startup.
+
 ## [0.1.1] - 2026-08-04
 
 ### Added
