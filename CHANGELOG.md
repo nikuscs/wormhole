@@ -7,6 +7,31 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- A `local` driver, selected with `--endpoint local`, serves HTTP services on local hostnames through
+  a single Host-routing loopback proxy, so many services share one port instead of each taking its
+  own. The default `.localhost` suffix resolves in browsers without DNS, a hosts entry, or elevation.
+- HTTPS for local endpoints, from a generated local certificate authority stored with owner-only
+  permissions that issues and caches one certificate per hostname through SNI. The authority is valid
+  for ten years and leaf certificates for 397 days, reissued within thirty days of expiry.
+- `wormhole local trust` and `wormhole local untrust` install and remove the local authority in the
+  system trust store, printing every privileged command before running it and requiring an
+  interactive confirmation or `--yes`.
+- `wormhole local hosts sync` and `wormhole local hosts clear` maintain a marked block in `/etc/hosts`
+  for suffixes other than `.localhost`. Wormhole never edits the hosts file on its own; an endpoint
+  whose hostname is missing from the block prints the exact command to run.
+- `wormhole local elevate` and `wormhole local unelevate` install and remove a root-owned forwarding
+  service so local endpoints answer on ports 80 and 443. Elevation refuses to proceed when the
+  executable or any parent directory is writable by a non-root user, installs a root-owned copy of
+  the binary, and the service drops to the invoking user once the privileged ports are bound.
+- `--tld`, `defaults.local_tld`, `defaults.local_http_port`, and `defaults.local_https_port` select
+  the local suffix and the loopback ports. `.test` is recommended for a suffix other than
+  `.localhost`; `.local` is reported as conflicting with mDNS and Bonjour.
+- `wormhole doctor` reports local certificate trust, the state of the managed hosts block, and
+  listener reachability.
+- Endpoints carry `hints` and `warnings`, both omitted from JSON output when empty.
+
 ## [0.1.2] - 2026-08-05
 
 ### Added
