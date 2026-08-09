@@ -134,8 +134,15 @@ wormhole http 3000 --endpoint tailscale
 wormhole http 3000 --endpoint tailscale:funnel
 wormhole http 3000 --endpoint cloudflare:quick
 wormhole http 3000 --endpoint cloudflare:named --host app.example.com --persist
+wormhole http 3000 --endpoint local
+wormhole http 3000 --endpoint local --tld test
 wormhole http 3000 --endpoint wormhole --endpoint tailscale --endpoint cloudflare
 ```
+
+Local endpoints default to `*.localhost`, which needs no DNS or hosts entry. For a custom suffix,
+`.test` is recommended (RFC 2606); Wormhole prints the exact `wormhole local hosts sync <hostname>`
+command when its managed `/etc/hosts` block is missing the name, but never edits the hosts file
+automatically. `.local` conflicts with mDNS/Bonjour (RFC 6762) and emits a warning if selected.
 
 Tailscale uses the local `tailscaled` login. Cloudflare quick tunnels need no login; named tunnels
 use `cloudflared tunnel login`.

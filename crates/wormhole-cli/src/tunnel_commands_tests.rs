@@ -74,6 +74,17 @@ async fn stable_provider_specs_generate_hosts_and_external_ports() {
     assert_eq!(local[0].host.as_deref(), Some("store-fix-cart.localhost"));
     assert_eq!(local[0].persist, Persistence::Temporary);
 
+    let custom_local = TunnelOptions {
+        endpoint: vec!["local".to_owned()],
+        tld: Some("test".to_owned()),
+        ..TunnelOptions::default()
+    };
+    let custom_local =
+        build_specs(ServiceProto::Http, &custom_local, &config, Some("store-fix-cart"))
+            .await
+            .expect("custom local TLD");
+    assert_eq!(custom_local[0].host.as_deref(), Some("store-fix-cart.test"));
+
     let tailscale =
         TunnelOptions { endpoint: vec!["tailscale".to_owned()], ..TunnelOptions::default() };
     let first = build_specs(ServiceProto::Http, &tailscale, &config, Some("store-fix-cart"))
@@ -119,6 +130,20 @@ async fn stable_provider_specs_generate_hosts_and_external_ports() {
         .await
         .expect("explicit port");
     assert_eq!(explicit[0].public_port, Some(24_443));
+}
+
+#[tokio::test]
+async fn local_tld_override_validates_scope_and_dns_rules() {
+    let config = ClientConfig::default();
+    let invalid = TunnelOptions {
+        endpoint: vec!["local".to_owned()],
+        tld: Some("Invalid TLD".to_owned()),
+        ..TunnelOptions::default()
+    };
+    assert!(build_specs(ServiceProto::Http, &invalid, &config, Some("app")).await.is_err());
+
+    let unrelated = TunnelOptions { tld: Some("test".to_owned()), ..TunnelOptions::default() };
+    assert!(build_specs(ServiceProto::Http, &unrelated, &config, Some("app")).await.is_err());
 }
 
 #[tokio::test]
@@ -318,6 +343,8 @@ fn endpoint(status: EndpointStatus) -> ActiveEndpoint {
         service: "web".to_owned(),
         driver: "mock".to_owned(),
         urls: Vec::new(),
+        hints: Vec::new(),
+        warnings: Vec::new(),
         status,
         buffered_delivered: 0,
         buffered_pending: 0,

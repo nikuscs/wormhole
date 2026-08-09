@@ -273,6 +273,12 @@ fn endpoint_line(endpoint: &wormhole_core::ActiveEndpoint, styled: bool) -> Stri
     } else {
         endpoint.urls.join(",")
     };
+    let notices = endpoint
+        .warnings
+        .iter()
+        .map(|warning| format!("\n  warning: {warning}"))
+        .chain(endpoint.hints.iter().map(|hint| format!("\n  hint: {hint}")))
+        .collect::<String>();
     let buffered = if endpoint.buffered_pending > 0 {
         format!(
             "\n  replaying {} buffered webhooks… delivered={} failed={}",
@@ -286,7 +292,7 @@ fn endpoint_line(endpoint: &wormhole_core::ActiveEndpoint, styled: bool) -> Stri
     } else {
         String::new()
     };
-    format!("{glyph} {}\t{status}\t{urls}{buffered}", endpoint.service)
+    format!("{glyph} {}\t{status}\t{urls}{notices}{buffered}", endpoint.service)
 }
 
 fn styles_enabled_stdout() -> bool {

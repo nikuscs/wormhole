@@ -273,6 +273,8 @@ impl TunnelManager {
                 service: service.to_owned(),
                 driver: spec.driver.clone(),
                 urls: Vec::new(),
+                hints: Vec::new(),
+                warnings: Vec::new(),
                 status: EndpointStatus::Reconnecting,
                 buffered_delivered: 0,
                 buffered_pending: 0,

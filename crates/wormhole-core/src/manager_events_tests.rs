@@ -106,6 +106,8 @@ fn endpoints(id: Uuid) -> RwLock<HashMap<Uuid, ActiveEndpoint>> {
             service: "fixture".to_owned(),
             driver: "fixture".to_owned(),
             urls: Vec::new(),
+            hints: Vec::new(),
+            warnings: Vec::new(),
             status: EndpointStatus::Online,
             buffered_delivered: 0,
             buffered_pending: 0,

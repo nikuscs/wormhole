@@ -85,6 +85,8 @@ fn active(status: EndpointStatus) -> ActiveEndpoint {
         service: "web".to_owned(),
         driver: "mock".to_owned(),
         urls: Vec::new(),
+        hints: Vec::new(),
+        warnings: Vec::new(),
         status,
         buffered_delivered: 0,
         buffered_pending: 0,

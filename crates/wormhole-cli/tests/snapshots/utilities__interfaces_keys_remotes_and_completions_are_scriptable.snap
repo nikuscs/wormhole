@@ -1,6 +1,5 @@
 ---
 source: crates/wormhole-cli/tests/utilities.rs
-assertion_line: 72
 expression: "String::from_utf8_lossy(&completions.stdout)"
 ---
 #compdef wormhole
@@ -43,6 +42,7 @@ _wormhole() {
 _arguments "${_arguments_options[@]}" : \
 '*--endpoint=[Add a provider endpoint specification; repeat for multiple URLs]:DRIVER[:QUALIFIER]:_default' \
 '--host=[Request a server-owned subdomain label]:HOST:_default' \
+'--tld=[Override the DNS suffix for local endpoints]:SUFFIX:_default' \
 '--public-port=[Request a provider-side public TCP port]:PORT:_default' \
 '--capture-body-max=[Maximum complete request body retained for inspection]:CAPTURE_BODY_MAX:_default' \
 '--buffer=[Buffer up to this many offline requests]:COUNT:_default' \
@@ -72,6 +72,7 @@ _arguments "${_arguments_options[@]}" : \
 _arguments "${_arguments_options[@]}" : \
 '*--endpoint=[Add a provider endpoint specification; repeat for multiple URLs]:DRIVER[:QUALIFIER]:_default' \
 '--host=[Request a server-owned subdomain label]:HOST:_default' \
+'--tld=[Override the DNS suffix for local endpoints]:SUFFIX:_default' \
 '--public-port=[Request a provider-side public TCP port]:PORT:_default' \
 '--capture-body-max=[Maximum complete request body retained for inspection]:CAPTURE_BODY_MAX:_default' \
 '--buffer=[Buffer up to this many offline requests]:COUNT:_default' \
@@ -102,6 +103,7 @@ _arguments "${_arguments_options[@]}" : \
 '--app-port=[Expected application port; skips automatic allocation]:APP_PORT:_default' \
 '*--endpoint=[Add a provider endpoint specification; repeat for multiple URLs]:DRIVER[:QUALIFIER]:_default' \
 '--host=[Request a server-owned subdomain label]:HOST:_default' \
+'--tld=[Override the DNS suffix for local endpoints]:SUFFIX:_default' \
 '--public-port=[Request a provider-side public TCP port]:PORT:_default' \
 '--capture-body-max=[Maximum complete request body retained for inspection]:CAPTURE_BODY_MAX:_default' \
 '--buffer=[Buffer up to this many offline requests]:COUNT:_default' \

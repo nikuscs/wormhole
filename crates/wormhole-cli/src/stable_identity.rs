@@ -10,6 +10,7 @@ pub fn apply(
     spec: &mut EndpointSpec,
     stable_slug: Option<&str>,
     config: &ClientConfig,
+    local_tld: Option<&str>,
 ) -> Result<(), CliError> {
     let Some(slug) = stable_slug.filter(|_| config.defaults.stable_worktree_urls) else {
         return Ok(());
@@ -33,7 +34,8 @@ pub fn apply(
         }
         ("local", _) => {
             if spec.host.is_none() {
-                spec.host = Some(format!("{slug}.{}", config.defaults.local_tld));
+                spec.host =
+                    Some(format!("{slug}.{}", local_tld.unwrap_or(&config.defaults.local_tld)));
             }
             Ok(())
         }

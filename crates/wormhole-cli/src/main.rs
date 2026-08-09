@@ -12,12 +12,14 @@ mod cloudflare_bundle;
 mod cloudflare_wrangler;
 mod daemon;
 mod daemon_commands;
+mod endpoint_options;
 mod error;
 mod future_api;
 mod local_api;
 mod local_api_auth;
 mod local_api_remotes;
 mod local_commands;
+mod local_notices;
 mod local_proxy;
 #[cfg(debug_assertions)]
 mod mock_driver;

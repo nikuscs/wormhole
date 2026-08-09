@@ -71,6 +71,8 @@ fn capability_validation_and_ready_url_application_cover_edge_cases() {
             service: "app".to_owned(),
             driver: "mock".to_owned(),
             urls: Vec::new(),
+            hints: Vec::new(),
+            warnings: Vec::new(),
             status: EndpointStatus::Online,
             buffered_delivered: 0,
             buffered_pending: 0,

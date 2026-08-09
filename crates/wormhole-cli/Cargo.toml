@@ -64,6 +64,9 @@ wormhole-core = { path = "../wormhole-core" }
 wormhole-proto = { path = "../wormhole-proto" }
 zeroize.workspace = true
 
+[target.'cfg(target_os = "macos")'.dependencies]
+privdrop.workspace = true
+
 [dev-dependencies]
 assert_cmd.workspace = true
 insta.workspace = true

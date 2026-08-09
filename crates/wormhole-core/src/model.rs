@@ -216,6 +216,12 @@ pub struct ActiveEndpoint {
     pub driver: String,
     /// Public URLs currently assigned.
     pub urls: Vec<String>,
+    /// Actionable setup commands associated with this endpoint.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub hints: Vec<String>,
+    /// Non-fatal endpoint configuration warnings.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub warnings: Vec<String>,
     /// Current lifecycle status.
     pub status: EndpointStatus,
     /// Number of buffered webhooks delivered in this daemon lifetime.

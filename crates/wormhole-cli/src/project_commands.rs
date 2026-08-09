@@ -32,7 +32,7 @@ pub async fn up(cli: &Cli, names: &[String]) -> Result<(), CliError> {
                 if endpoint.retry.is_none() {
                     endpoint.retry.clone_from(&config.defaults.retry);
                 }
-                stable_identity::apply(endpoint, Some(&slug), &config)?;
+                stable_identity::apply(endpoint, Some(&slug), &config, None)?;
             }
         }
         active.extend(

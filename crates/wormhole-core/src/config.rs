@@ -330,7 +330,8 @@ fn valid_dns_domain(value: &str) -> bool {
     value.contains('.') && valid_dns_suffix(value)
 }
 
-fn valid_dns_suffix(value: &str) -> bool {
+/// Returns whether a value is a lowercase DNS suffix accepted by local routing.
+pub fn valid_dns_suffix(value: &str) -> bool {
     value.len() <= 253
         && value.split('.').all(|label| {
             !label.is_empty()

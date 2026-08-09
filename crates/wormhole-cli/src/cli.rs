@@ -104,6 +104,9 @@ pub struct TunnelOptions {
     /// Request a server-owned subdomain label.
     #[arg(long)]
     pub host: Option<String>,
+    /// Override the DNS suffix for local endpoints.
+    #[arg(long, value_name = "SUFFIX")]
+    pub tld: Option<String>,
     /// Request a provider-side public TCP port.
     #[arg(long, value_name = "PORT")]
     pub public_port: Option<u16>,

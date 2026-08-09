@@ -756,6 +756,13 @@
             "type": "string",
             "description": "Driver registry name."
           },
+          "hints": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Actionable setup commands associated with this endpoint."
+          },
           "id": {
             "type": "string",
             "format": "uuid",
@@ -780,6 +787,13 @@
               "type": "string"
             },
             "description": "Public URLs currently assigned."
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Non-fatal endpoint configuration warnings."
           }
         }
       },

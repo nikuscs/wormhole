@@ -303,12 +303,23 @@ async fn privileged_forward(
     Ok(())
 }
 
+#[cfg(target_os = "linux")]
 fn drop_forwarder_privileges(user_id: u32, group_id: u32) -> Result<(), CliError> {
-    #[cfg(target_os = "linux")]
     nix::unistd::setgroups(&[])
         .map_err(|error| CliError::Invalid(format!("cannot clear forwarder groups: {error}")))?;
     nix::unistd::setgid(nix::unistd::Gid::from_raw(group_id))
         .and_then(|()| nix::unistd::setuid(nix::unistd::Uid::from_raw(user_id)))
+        .map_err(|error| CliError::Invalid(format!("cannot drop forwarder privileges: {error}")))
+}
+
+#[cfg(target_os = "macos")]
+fn drop_forwarder_privileges(user_id: u32, group_id: u32) -> Result<(), CliError> {
+    privdrop::PrivDrop::default()
+        .user(user_id.to_string())
+        .group(group_id.to_string())
+        .group_list::<&str>(&[])
+        .fallback_to_ids_if_names_are_numeric()
+        .apply()
         .map_err(|error| CliError::Invalid(format!("cannot drop forwarder privileges: {error}")))
 }
 
