@@ -9,6 +9,7 @@ pub mod error;
 pub mod ifaces;
 pub mod keys_store;
 pub mod local_ca;
+mod local_elevation;
 pub mod local_router;
 pub mod local_system;
 pub mod manager;

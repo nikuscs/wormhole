@@ -11,7 +11,8 @@ use wormhole_core::{
     local_system::{
         CommandRunner, CommandSpec, LocalPlatform, SystemCommandRunner, elevation_commands,
         elevation_enabled, forwarder_definition, hosts_block_state, hosts_install_command,
-        prepare_hosts_file, trust_commands, trust_state, untrust_commands, write_elevation_marker,
+        prepare_hosts_file, remove_elevation_marker, trust_commands, trust_state,
+        unelevation_commands, untrust_commands, verify_executable_source, write_elevation_marker,
     },
 };
 
@@ -41,8 +42,9 @@ pub async fn execute(cli: &Cli, command: &LocalCommand) -> Result<(), CliError> 
         LocalCommand::Untrust { yes } => trust(cli, false, *yes),
         LocalCommand::Hosts { command } => hosts(cli, command),
         LocalCommand::Elevate { yes } => elevate(cli, *yes),
-        LocalCommand::PrivilegedForward { clear_target, tls_target } => {
-            privileged_forward(*clear_target, *tls_target).await
+        LocalCommand::Unelevate { yes } => unelevate(cli, *yes),
+        LocalCommand::PrivilegedForward { clear_target, tls_target, user_id, group_id } => {
+            privileged_forward(*clear_target, *tls_target, *user_id, *group_id).await
         }
     }
 }
@@ -132,22 +134,37 @@ fn elevate(cli: &Cli, yes: bool) -> Result<(), CliError> {
     let config = utility_commands::load(cli.config.as_ref())?;
     let directory = config_directory()?;
     let executable = std::env::current_exe()?;
-    let executable = utf8_path(&executable)?;
+    let executable =
+        verify_executable_source(&utf8_path(&executable)?).map_err(CliError::Invalid)?;
     let definition = forwarder_definition(
         LocalPlatform::current(),
-        &executable,
         config.defaults.local_http_port,
         config.defaults.local_https_port,
+        nix::unistd::getuid().as_raw(),
+        nix::unistd::getgid().as_raw(),
     );
     let temporary = temporary_file(&directory, &definition)?;
     let path = utf8_path(temporary.path())?;
     let result = apply_commands(
         "local privileged ports",
-        elevation_commands(LocalPlatform::current(), &path),
+        elevation_commands(LocalPlatform::current(), &executable, &path),
         yes,
         &SystemCommandRunner,
     )?;
     write_elevation_marker(&directory)?;
+    output::emit(super::format(cli.json), &result);
+    Ok(())
+}
+
+fn unelevate(cli: &Cli, yes: bool) -> Result<(), CliError> {
+    let directory = config_directory()?;
+    let result = apply_commands(
+        "local privileged ports removal",
+        unelevation_commands(LocalPlatform::current()),
+        yes,
+        &SystemCommandRunner,
+    )?;
+    remove_elevation_marker(&directory)?;
     output::emit(super::format(cli.json), &result);
     Ok(())
 }
@@ -273,15 +290,29 @@ fn utf8_path(path: &std::path::Path) -> Result<Utf8PathBuf, CliError> {
         .map_err(|path| CliError::Invalid(format!("path is not UTF-8: {}", path.display())))
 }
 
-async fn privileged_forward(clear_target: u16, tls_target: u16) -> Result<(), CliError> {
-    let clear = forward_listener(80, clear_target);
-    let tls = forward_listener(443, tls_target);
-    tokio::try_join!(clear, tls)?;
+async fn privileged_forward(
+    clear_target: u16,
+    tls_target: u16,
+    user_id: u32,
+    group_id: u32,
+) -> Result<(), CliError> {
+    let clear = TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 80)).await?;
+    let tls = TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 443)).await?;
+    drop_forwarder_privileges(user_id, group_id)?;
+    tokio::try_join!(serve_listener(clear, clear_target), serve_listener(tls, tls_target))?;
     Ok(())
 }
 
-async fn forward_listener(public_port: u16, target_port: u16) -> Result<(), std::io::Error> {
-    let listener = TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, public_port)).await?;
+fn drop_forwarder_privileges(user_id: u32, group_id: u32) -> Result<(), CliError> {
+    #[cfg(target_os = "linux")]
+    nix::unistd::setgroups(&[])
+        .map_err(|error| CliError::Invalid(format!("cannot clear forwarder groups: {error}")))?;
+    nix::unistd::setgid(nix::unistd::Gid::from_raw(group_id))
+        .and_then(|()| nix::unistd::setuid(nix::unistd::Uid::from_raw(user_id)))
+        .map_err(|error| CliError::Invalid(format!("cannot drop forwarder privileges: {error}")))
+}
+
+async fn serve_listener(listener: TcpListener, target_port: u16) -> Result<(), std::io::Error> {
     loop {
         let (incoming, _) = listener.accept().await?;
         tokio::spawn(forward(incoming, target_port));

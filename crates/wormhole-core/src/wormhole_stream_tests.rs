@@ -271,9 +271,12 @@ async fn forwards_spooled_error_when_retry_attempts_are_exhausted() {
 
 #[tokio::test]
 async fn retries_when_local_listener_appears_after_initial_connect_failure() {
-    let reservation = std::net::TcpListener::bind("127.0.0.1:0").expect("reserve listener");
-    let target = reservation.local_addr().expect("target");
-    drop(reservation);
+    let socket = socket2::Socket::new(socket2::Domain::IPV4, socket2::Type::STREAM, None)
+        .expect("reserve socket");
+    socket
+        .bind(&"127.0.0.1:0".parse::<std::net::SocketAddr>().expect("address").into())
+        .expect("bind reserved socket");
+    let target = socket.local_addr().expect("reserved address").as_socket().expect("TCP address");
     let retry = RetryPolicy {
         max_attempts: 3,
         initial_delay_ms: 100,
@@ -294,9 +297,11 @@ async fn retries_when_local_listener_appears_after_initial_connect_failure() {
     let (mut response, mut request) = tokio::io::split(client);
     request.write_all(b"payload").await.expect("body");
     request.shutdown().await.expect("request eof");
-    tokio::time::sleep(std::time::Duration::from_millis(25)).await;
-    let listener = tokio::net::TcpListener::bind(target).await.expect("late listener");
     let local = tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+        socket.listen(128).expect("activate reserved listener");
+        socket.set_nonblocking(true).expect("nonblocking listener");
+        let listener = tokio::net::TcpListener::from_std(socket.into()).expect("late listener");
         let (mut stream, _) = listener.accept().await.expect("retry accept");
         let mut request = Vec::new();
         while !request.ends_with(b"payload") {

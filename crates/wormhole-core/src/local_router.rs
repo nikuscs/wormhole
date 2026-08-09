@@ -116,6 +116,11 @@ impl LocalRouter {
         Ok(RouteRegistration { router: Arc::clone(self), key, hostname })
     }
 
+    #[cfg(test)]
+    pub(crate) async fn listener_count(&self) -> usize {
+        self.listeners.lock().await.len()
+    }
+
     async fn deregister(&self, key: ListenerKey, hostname: &str) {
         let mut listeners = self.listeners.lock().await;
         let should_stop = listeners.get_mut(&key).is_some_and(|state| {

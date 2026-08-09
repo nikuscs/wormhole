@@ -5,7 +5,8 @@ use camino::Utf8Path;
 use super::{
     CommandOutput, CommandRunner, ELEVATION_MARKER, HOSTS_BEGIN, HOSTS_END, LocalPlatform,
     elevation_commands, elevation_enabled, forwarder_definition, hosts_install_command,
-    managed_hosts, prepare_hosts_file, render_hosts, trust_commands, trust_state, untrust_commands,
+    managed_hosts, prepare_hosts_file, remove_elevation_marker, render_hosts, root_forwarder_path,
+    trust_commands, trust_state, unelevation_commands, untrust_commands, verify_executable_source,
     write_elevation_marker,
 };
 
@@ -53,11 +54,13 @@ fn hosts_block_render_parse_update_and_remove_round_trip() {
 #[test]
 fn privileged_plans_are_explicit_and_execute_only_through_runner() {
     let ca = Utf8Path::new("/tmp/Wormhole CA.pem");
+    let source = Utf8Path::new("/opt/wormhole source");
     let temporary = Utf8Path::new("/tmp/wormhole service");
     let runner = FakeRunner::default();
     let mut commands = trust_commands(LocalPlatform::MacOs, ca, true);
     commands.extend(untrust_commands(LocalPlatform::Linux, ca, true));
-    commands.extend(elevation_commands(LocalPlatform::Linux, temporary));
+    commands.extend(elevation_commands(LocalPlatform::Linux, source, temporary));
+    commands.extend(unelevation_commands(LocalPlatform::MacOs));
     commands.push(hosts_install_command(temporary, Utf8Path::new("/etc/hosts")));
 
     for command in &commands {
@@ -69,6 +72,11 @@ fn privileged_plans_are_explicit_and_execute_only_through_runner() {
     assert!(executed[0].contains("sudo security add-trusted-cert"));
     assert!(executed[0].contains("'/tmp/Wormhole CA.pem'"));
     assert!(executed.iter().any(|command| command.contains("systemctl enable --now")));
+    assert!(executed.iter().any(|command| {
+        command.contains("'/opt/wormhole source'")
+            && command.contains("/usr/local/lib/wormhole/wormhole-local-forwarder")
+    }));
+    assert!(executed.iter().any(|command| command.contains("launchctl bootout")));
     assert!(executed.last().expect("hosts command").contains("/etc/hosts"));
     drop(executed);
 }
@@ -102,15 +110,36 @@ fn linux_trust_falls_back_to_update_ca_trust() {
 fn forwarder_definitions_and_marker_are_deterministic() {
     let directory = tempfile::tempdir().expect("directory");
     let root = Utf8Path::from_path(directory.path()).expect("UTF-8 path");
-    let executable = Utf8Path::new("/opt/Wormhole & Co/wormhole");
-    let plist = forwarder_definition(LocalPlatform::MacOs, executable, 20_080, 20_443);
-    let unit = forwarder_definition(LocalPlatform::Linux, executable, 20_080, 20_443);
+    let plist = forwarder_definition(LocalPlatform::MacOs, 20_080, 20_443, 501, 20);
+    let unit = forwarder_definition(LocalPlatform::Linux, 20_080, 20_443, 1000, 1000);
 
-    assert!(plist.contains("/opt/Wormhole &amp; Co/wormhole"));
-    assert!(plist.contains("<string>20080</string>"));
+    assert!(plist.contains("/usr/local/libexec/wormhole-local-forwarder"));
+    assert!(plist.contains("<key>UserName</key><string>root</string>"));
+    assert!(plist.contains("<string>--drop-uid</string><string>501</string>"));
+    assert!(unit.contains("/usr/local/lib/wormhole/wormhole-local-forwarder"));
+    assert!(unit.contains("User=root\nGroup=root"));
     assert!(unit.contains("--clear-target=20080 --tls-target=20443"));
+    assert!(unit.contains("--drop-uid=1000 --drop-gid=1000"));
+    assert_eq!(
+        root_forwarder_path(LocalPlatform::MacOs),
+        Utf8Path::new("/usr/local/libexec/wormhole-local-forwarder")
+    );
     assert!(!elevation_enabled(root));
     let marker = write_elevation_marker(root).expect("marker");
     assert_eq!(marker.file_name(), Some(ELEVATION_MARKER));
     assert!(elevation_enabled(root));
+    remove_elevation_marker(root).expect("remove marker");
+    assert!(!elevation_enabled(root));
+}
+
+#[test]
+fn elevation_rejects_user_writable_executable_ancestry() {
+    let directory = tempfile::tempdir().expect("directory");
+    let executable = Utf8Path::from_path(directory.path()).expect("UTF-8 path").join("wormhole");
+    std::fs::write(&executable, "fixture").expect("executable");
+
+    let error = verify_executable_source(&executable).expect_err("writable source must fail");
+
+    assert!(error.contains("refusing elevation"));
+    assert!(error.contains("writable by a non-root user"));
 }

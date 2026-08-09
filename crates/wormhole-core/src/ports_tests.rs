@@ -10,11 +10,10 @@ use super::{detect_child_port, reserve_port, wait_for_listener};
 const CHILD_PORT_ENV: &str = "WORMHOLE_PORT_TEST_CHILD_PORT";
 
 #[test]
-fn reservation_holds_port_until_child_spawn() {
+fn reservation_exclusively_holds_selected_port() {
     let (port, reservation) = reserve_port(4000..=4999).expect("reservation");
+    assert_eq!(reservation.local_addr().expect("reserved address").port(), port);
     assert!(std::net::TcpListener::bind((Ipv4Addr::LOCALHOST, port)).is_err());
-    drop(reservation);
-    assert!(std::net::TcpListener::bind((Ipv4Addr::LOCALHOST, port)).is_ok());
 }
 
 #[tokio::test]

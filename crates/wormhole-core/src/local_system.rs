@@ -2,11 +2,16 @@
 
 use std::{fs, process::Command};
 
-use camino::{Utf8Path, Utf8PathBuf};
+use camino::Utf8Path;
+
+pub use crate::local_elevation::{
+    ELEVATION_MARKER, elevation_commands, elevation_enabled, forwarder_definition,
+    remove_elevation_marker, root_forwarder_path, unelevation_commands, verify_executable_source,
+    write_elevation_marker,
+};
 
 pub const HOSTS_BEGIN: &str = "# BEGIN WORMHOLE LOCAL";
 pub const HOSTS_END: &str = "# END WORMHOLE LOCAL";
-pub const ELEVATION_MARKER: &str = "local-elevation.toml";
 
 /// Supported local operating-system integration.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -137,46 +142,6 @@ pub fn trust_check_command(platform: LocalPlatform, p11_kit: bool) -> Option<Com
     }
 }
 
-pub fn elevation_commands(platform: LocalPlatform, temporary: &Utf8Path) -> Vec<CommandSpec> {
-    match platform {
-        LocalPlatform::MacOs => vec![
-            command(
-                "sudo",
-                &[
-                    "install",
-                    "-m",
-                    "0644",
-                    temporary.as_str(),
-                    "/Library/LaunchDaemons/dev.wormhole.local.plist",
-                ],
-            ),
-            command(
-                "sudo",
-                &[
-                    "launchctl",
-                    "bootstrap",
-                    "system",
-                    "/Library/LaunchDaemons/dev.wormhole.local.plist",
-                ],
-            ),
-        ],
-        LocalPlatform::Linux => vec![
-            command(
-                "sudo",
-                &[
-                    "install",
-                    "-m",
-                    "0644",
-                    temporary.as_str(),
-                    "/etc/systemd/system/wormhole-local.service",
-                ],
-            ),
-            command("sudo", &["systemctl", "daemon-reload"]),
-            command("sudo", &["systemctl", "enable", "--now", "wormhole-local.service"]),
-        ],
-    }
-}
-
 pub fn hosts_install_command(temporary: &Utf8Path, destination: &Utf8Path) -> CommandSpec {
     command("sudo", &["install", "-m", "0644", temporary.as_str(), destination.as_str()])
 }
@@ -259,29 +224,6 @@ pub fn managed_hosts(contents: &str) -> Vec<String> {
     hosts
 }
 
-pub fn write_elevation_marker(directory: &Utf8Path) -> Result<Utf8PathBuf, std::io::Error> {
-    fs::create_dir_all(directory)?;
-    let path = directory.join(ELEVATION_MARKER);
-    fs::write(&path, "enabled = true\n")?;
-    Ok(path)
-}
-
-pub fn elevation_enabled(directory: &Utf8Path) -> bool {
-    directory.join(ELEVATION_MARKER).is_file()
-}
-
-pub fn forwarder_definition(
-    platform: LocalPlatform,
-    executable: &Utf8Path,
-    clear_target: u16,
-    tls_target: u16,
-) -> String {
-    match platform {
-        LocalPlatform::MacOs => launchd_plist(executable, clear_target, tls_target),
-        LocalPlatform::Linux => systemd_unit(executable, clear_target, tls_target),
-    }
-}
-
 fn remove_hosts_block(contents: &str) -> String {
     let Some((before, rest)) = contents.split_once(HOSTS_BEGIN) else {
         return contents.to_owned();
@@ -312,23 +254,6 @@ fn shell_word(value: &str) -> String {
     } else {
         format!("'{}'", value.replace('\'', "'\\''"))
     }
-}
-
-fn launchd_plist(executable: &Utf8Path, clear_target: u16, tls_target: u16) -> String {
-    format!(
-        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<plist version=\"1.0\"><dict><key>Label</key><string>dev.wormhole.local</string><key>ProgramArguments</key><array><string>{}</string><string>local</string><string>privileged-forward</string><string>--clear-target</string><string>{clear_target}</string><string>--tls-target</string><string>{tls_target}</string></array><key>RunAtLoad</key><true/><key>KeepAlive</key><true/></dict></plist>\n",
-        xml_escape(executable.as_str())
-    )
-}
-
-fn systemd_unit(executable: &Utf8Path, clear_target: u16, tls_target: u16) -> String {
-    format!(
-        "[Unit]\nDescription=Wormhole local privileged port forwarder\nAfter=network.target\n\n[Service]\nExecStart={executable} local privileged-forward --clear-target={clear_target} --tls-target={tls_target}\nRestart=on-failure\nNoNewPrivileges=true\n\n[Install]\nWantedBy=multi-user.target\n"
-    )
-}
-
-fn xml_escape(value: &str) -> String {
-    value.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
 }
 
 #[cfg(test)]

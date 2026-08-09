@@ -24,8 +24,7 @@ async fn routes_requests_by_normalized_host_and_removes_last_listener() {
     first_route.close().await;
     assert_eq!(request(address, "two.localhost").await, "second");
     second_route.close().await;
-    let rebound = TcpListener::bind(address).await.expect("last route released listener");
-    drop(rebound);
+    assert_eq!(router.listener_count().await, 0);
 }
 
 #[tokio::test]

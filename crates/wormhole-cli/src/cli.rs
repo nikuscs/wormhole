@@ -302,6 +302,12 @@ pub enum LocalCommand {
         #[arg(short = 'y', long)]
         yes: bool,
     },
+    /// Remove the root-owned 80/443 loopback forwarding service.
+    Unelevate {
+        /// Apply without an interactive confirmation.
+        #[arg(short = 'y', long)]
+        yes: bool,
+    },
     /// Root-owned loopback forwarder installed by `local elevate`.
     #[command(hide = true)]
     PrivilegedForward {
@@ -309,6 +315,10 @@ pub enum LocalCommand {
         clear_target: u16,
         #[arg(long)]
         tls_target: u16,
+        #[arg(long = "drop-uid")]
+        user_id: u32,
+        #[arg(long = "drop-gid")]
+        group_id: u32,
     },
 }
 

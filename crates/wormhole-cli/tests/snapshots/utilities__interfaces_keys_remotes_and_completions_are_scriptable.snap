@@ -827,10 +827,28 @@ _arguments "${_arguments_options[@]}" : \
 '--version[Print version]' \
 && ret=0
 ;;
+(unelevate)
+_arguments "${_arguments_options[@]}" : \
+'--config=[Override the global configuration file]:PATH:_files' \
+'-y[Apply without an interactive confirmation]' \
+'--yes[Apply without an interactive confirmation]' \
+'--json[Emit stable JSON instead of human-readable output]' \
+'(-v --verbose)-q[Suppress nonessential diagnostics]' \
+'(-v --verbose)--quiet[Suppress nonessential diagnostics]' \
+'*-v[Increase diagnostic verbosity (repeat for trace logging)]' \
+'*--verbose[Increase diagnostic verbosity (repeat for trace logging)]' \
+'-h[Print help]' \
+'--help[Print help]' \
+'-V[Print version]' \
+'--version[Print version]' \
+&& ret=0
+;;
 (privileged-forward)
 _arguments "${_arguments_options[@]}" : \
 '--clear-target=[]:CLEAR_TARGET:_default' \
 '--tls-target=[]:TLS_TARGET:_default' \
+'--drop-uid=[]:USER_ID:_default' \
+'--drop-gid=[]:GROUP_ID:_default' \
 '--config=[Override the global configuration file]:PATH:_files' \
 '--json[Emit stable JSON instead of human-readable output]' \
 '(-v --verbose)-q[Suppress nonessential diagnostics]' \
@@ -888,6 +906,10 @@ _arguments "${_arguments_options[@]}" : \
 esac
 ;;
 (elevate)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(unelevate)
 _arguments "${_arguments_options[@]}" : \
 && ret=0
 ;;
@@ -1298,6 +1320,10 @@ esac
 _arguments "${_arguments_options[@]}" : \
 && ret=0
 ;;
+(unelevate)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
 (privileged-forward)
 _arguments "${_arguments_options[@]}" : \
 && ret=0
@@ -1617,6 +1643,7 @@ _wormhole__subcmd__help__subcmd__local_commands() {
 'untrust:Remove the Wormhole local CA from the operating-system trust store' \
 'hosts:Manage the Wormhole block in the hosts file' \
 'elevate:Install the root-owned 80/443 loopback forwarding service' \
+'unelevate:Remove the root-owned 80/443 loopback forwarding service' \
 'privileged-forward:Root-owned loopback forwarder installed by \`local elevate\`' \
     )
     _describe -t commands 'wormhole help local commands' commands "$@"
@@ -1653,6 +1680,11 @@ _wormhole__subcmd__help__subcmd__local__subcmd__privileged-forward_commands() {
 _wormhole__subcmd__help__subcmd__local__subcmd__trust_commands() {
     local commands; commands=()
     _describe -t commands 'wormhole help local trust commands' commands "$@"
+}
+(( $+functions[_wormhole__subcmd__help__subcmd__local__subcmd__unelevate_commands] )) ||
+_wormhole__subcmd__help__subcmd__local__subcmd__unelevate_commands() {
+    local commands; commands=()
+    _describe -t commands 'wormhole help local unelevate commands' commands "$@"
 }
 (( $+functions[_wormhole__subcmd__help__subcmd__local__subcmd__untrust_commands] )) ||
 _wormhole__subcmd__help__subcmd__local__subcmd__untrust_commands() {
@@ -1820,6 +1852,7 @@ _wormhole__subcmd__local_commands() {
 'untrust:Remove the Wormhole local CA from the operating-system trust store' \
 'hosts:Manage the Wormhole block in the hosts file' \
 'elevate:Install the root-owned 80/443 loopback forwarding service' \
+'unelevate:Remove the root-owned 80/443 loopback forwarding service' \
 'privileged-forward:Root-owned loopback forwarder installed by \`local elevate\`' \
 'help:Print this message or the help of the given subcommand(s)' \
     )
@@ -1837,6 +1870,7 @@ _wormhole__subcmd__local__subcmd__help_commands() {
 'untrust:Remove the Wormhole local CA from the operating-system trust store' \
 'hosts:Manage the Wormhole block in the hosts file' \
 'elevate:Install the root-owned 80/443 loopback forwarding service' \
+'unelevate:Remove the root-owned 80/443 loopback forwarding service' \
 'privileged-forward:Root-owned loopback forwarder installed by \`local elevate\`' \
 'help:Print this message or the help of the given subcommand(s)' \
     )
@@ -1879,6 +1913,11 @@ _wormhole__subcmd__local__subcmd__help__subcmd__privileged-forward_commands() {
 _wormhole__subcmd__local__subcmd__help__subcmd__trust_commands() {
     local commands; commands=()
     _describe -t commands 'wormhole local help trust commands' commands "$@"
+}
+(( $+functions[_wormhole__subcmd__local__subcmd__help__subcmd__unelevate_commands] )) ||
+_wormhole__subcmd__local__subcmd__help__subcmd__unelevate_commands() {
+    local commands; commands=()
+    _describe -t commands 'wormhole local help unelevate commands' commands "$@"
 }
 (( $+functions[_wormhole__subcmd__local__subcmd__help__subcmd__untrust_commands] )) ||
 _wormhole__subcmd__local__subcmd__help__subcmd__untrust_commands() {
@@ -1937,6 +1976,11 @@ _wormhole__subcmd__local__subcmd__privileged-forward_commands() {
 _wormhole__subcmd__local__subcmd__trust_commands() {
     local commands; commands=()
     _describe -t commands 'wormhole local trust commands' commands "$@"
+}
+(( $+functions[_wormhole__subcmd__local__subcmd__unelevate_commands] )) ||
+_wormhole__subcmd__local__subcmd__unelevate_commands() {
+    local commands; commands=()
+    _describe -t commands 'wormhole local unelevate commands' commands "$@"
 }
 (( $+functions[_wormhole__subcmd__local__subcmd__untrust_commands] )) ||
 _wormhole__subcmd__local__subcmd__untrust_commands() {
