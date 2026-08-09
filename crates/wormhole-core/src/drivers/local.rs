@@ -3,32 +3,65 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use tokio::sync::mpsc;
+use camino::Utf8PathBuf;
+use tokio::sync::{OnceCell, mpsc};
 use tokio_util::sync::CancellationToken;
 use wormhole_proto::frames::Persistence;
 
 use crate::{
     driver::{DriverCapabilities, DriverEvent, DriverHealth, TunnelDriver},
     error::DriverError,
-    local_router::{LocalRouter, shared},
+    local_ca::{LocalCertResolver, LocalCertificateAuthority},
+    local_router::{LocalRouter, RouteRegistration, shared},
     model::{EndpointSpec, ResolvedTarget, ServiceProto},
 };
 
-/// Local HTTP Host-routing driver.
+/// Local HTTP and HTTPS Host-routing driver.
 pub struct LocalDriver {
     router: Arc<LocalRouter>,
     http_port: u16,
+    https_port: u16,
+    ca_directory: Option<Utf8PathBuf>,
+    resolver: OnceCell<Arc<LocalCertResolver>>,
 }
 
 impl LocalDriver {
     /// Creates the production driver using the process-wide router.
-    pub fn new(http_port: u16) -> Self {
-        Self { router: shared(), http_port }
+    pub fn new(clear_port: u16, tls_port: u16, ca_directory: Option<Utf8PathBuf>) -> Self {
+        Self {
+            router: shared(),
+            http_port: clear_port,
+            https_port: tls_port,
+            ca_directory,
+            resolver: OnceCell::new(),
+        }
     }
 
     #[cfg(test)]
-    pub(super) fn isolated(http_port: u16) -> Self {
-        Self { router: Arc::new(LocalRouter::new()), http_port }
+    pub(super) fn isolated(clear_port: u16, tls_port: u16, ca_directory: Utf8PathBuf) -> Self {
+        Self {
+            router: Arc::new(LocalRouter::new()),
+            http_port: clear_port,
+            https_port: tls_port,
+            ca_directory: Some(ca_directory),
+            resolver: OnceCell::new(),
+        }
+    }
+
+    async fn resolver(&self) -> Result<Arc<LocalCertResolver>, DriverError> {
+        self.resolver
+            .get_or_try_init(|| async {
+                let directory = self.ca_directory.as_deref().ok_or_else(|| {
+                    DriverError::Transport(
+                        "Wormhole configuration directory is unavailable".to_owned(),
+                    )
+                })?;
+                let authority = LocalCertificateAuthority::load_or_create(directory)
+                    .map_err(|error| DriverError::Transport(error.to_string()))?;
+                Ok(Arc::new(LocalCertResolver::new(Arc::new(authority))))
+            })
+            .await
+            .map(Arc::clone)
     }
 }
 
@@ -80,29 +113,66 @@ impl TunnelDriver for LocalDriver {
     ) -> Result<(), DriverError> {
         self.validate(&spec)?;
         let hostname = spec.host.as_deref().expect("validated local hostname");
-        let registration = self.router.register(self.http_port, hostname, target.0).await?;
-        let listener_port = registration
-            .listener_address()
-            .await
-            .ok_or_else(|| DriverError::Transport("local listener disappeared".to_owned()))?
-            .port();
-        let url = local_url(hostname, listener_port);
-        if events
-            .send(DriverEvent::Ready { urls: vec![url], bind_id: None, reservation: None })
-            .await
-            .is_err()
+        let http = self.router.register(self.http_port, hostname, target.0).await?;
+        let resolver = match self.resolver().await {
+            Ok(resolver) => resolver,
+            Err(error) => {
+                http.close().await;
+                return Err(error);
+            }
+        };
+        let https =
+            match self.router.register_https(self.https_port, hostname, target.0, resolver).await {
+                Ok(registration) => registration,
+                Err(error) => {
+                    http.close().await;
+                    return Err(error);
+                }
+            };
+        let urls = endpoint_urls(hostname, &http, &https).await?;
+        if events.send(DriverEvent::Ready { urls, bind_id: None, reservation: None }).await.is_err()
         {
-            registration.close().await;
+            close_routes(http, https).await;
             return Err(DriverError::Cancelled);
         }
         stop.cancelled().await;
-        registration.close().await;
+        close_routes(http, https).await;
         Ok(())
     }
 }
 
-fn local_url(hostname: &str, port: u16) -> String {
-    if port == 80 { format!("http://{hostname}") } else { format!("http://{hostname}:{port}") }
+async fn endpoint_urls(
+    hostname: &str,
+    http: &RouteRegistration,
+    https: &RouteRegistration,
+) -> Result<Vec<String>, DriverError> {
+    let clear_port = listener_port(http).await?;
+    let tls_port = listener_port(https).await?;
+    Ok(vec![
+        local_url("https", hostname, tls_port, 443),
+        local_url("http", hostname, clear_port, 80),
+    ])
+}
+
+async fn listener_port(registration: &RouteRegistration) -> Result<u16, DriverError> {
+    registration
+        .listener_address()
+        .await
+        .map(|address| address.port())
+        .ok_or_else(|| DriverError::Transport("local listener disappeared".to_owned()))
+}
+
+async fn close_routes(http: RouteRegistration, https: RouteRegistration) {
+    https.close().await;
+    http.close().await;
+}
+
+fn local_url(scheme: &str, hostname: &str, port: u16, default_port: u16) -> String {
+    if port == default_port {
+        format!("{scheme}://{hostname}")
+    } else {
+        format!("{scheme}://{hostname}:{port}")
+    }
 }
 
 fn valid_hostname(value: &str) -> bool {

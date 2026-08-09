@@ -18,7 +18,9 @@ mod conformance;
 use std::sync::Arc;
 
 use crate::{
-    config::ClientConfig, driver::DriverRegistry, keys_store::IdentityStore,
+    config::{ClientConfig, global_config_path},
+    driver::DriverRegistry,
+    keys_store::IdentityStore,
     wormhole_driver::WormholeDriver,
 };
 
@@ -34,6 +36,12 @@ pub fn build_registry(config: &ClientConfig, identities: Arc<IdentityStore>) -> 
         config.defaults.tailscale_https_port_range,
     )));
     registry.register(Arc::new(cloudflare::CloudflareDriver::system()));
-    registry.register(Arc::new(local::LocalDriver::new(config.defaults.local_http_port)));
+    let ca_directory =
+        global_config_path().ok().and_then(|path| path.parent().map(camino::Utf8Path::to_owned));
+    registry.register(Arc::new(local::LocalDriver::new(
+        config.defaults.local_http_port,
+        config.defaults.local_https_port,
+        ca_directory,
+    )));
     registry
 }

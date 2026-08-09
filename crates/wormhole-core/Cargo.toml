@@ -32,6 +32,7 @@ parking_lot.workspace = true
 quinn.workspace = true
 rand.workspace = true
 reqwest.workspace = true
+rcgen.workspace = true
 rustls.workspace = true
 rustls-pki-types.workspace = true
 serde.workspace = true
@@ -42,6 +43,7 @@ thiserror.workspace = true
 tempfile.workspace = true
 tokio.workspace = true
 tokio-tungstenite.workspace = true
+tokio-rustls.workspace = true
 tokio-util.workspace = true
 toml.workspace = true
 tracing.workspace = true
@@ -52,6 +54,4 @@ wormhole-proto = { path = "../wormhole-proto" }
 
 [dev-dependencies]
 insta.workspace = true
-rcgen.workspace = true
 tempfile.workspace = true
-tokio-rustls.workspace = true

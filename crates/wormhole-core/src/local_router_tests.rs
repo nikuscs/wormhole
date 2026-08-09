@@ -6,6 +6,7 @@ use tokio::{
 };
 
 use super::LocalRouter;
+use crate::local_ca::{LocalCertResolver, LocalCertificateAuthority};
 
 #[tokio::test]
 async fn routes_requests_by_normalized_host_and_removes_last_listener() {
@@ -39,6 +40,41 @@ async fn binary_post_body_routes_and_reaches_upstream_intact() {
 
     let boundary = response.windows(4).position(|bytes| bytes == b"\r\n\r\n").expect("head");
     assert_eq!(&response[boundary + 4..], body);
+    route.close().await;
+}
+
+#[tokio::test]
+async fn https_uses_sni_certificate_and_routes_by_host() {
+    let target = target_server(b"secure").await;
+    let directory = tempfile::tempdir().expect("CA directory");
+    let root = camino::Utf8Path::from_path(directory.path()).expect("UTF-8 path");
+    let authority =
+        std::sync::Arc::new(LocalCertificateAuthority::load_or_create(root).expect("local CA"));
+    let mut roots = rustls::RootCertStore::empty();
+    roots.add(authority.certificate_der()).expect("trusted CA");
+    let resolver = std::sync::Arc::new(LocalCertResolver::new(authority));
+    let router = std::sync::Arc::new(LocalRouter::new());
+    let route =
+        router.register_https(0, "secure.localhost", target, resolver).await.expect("HTTPS route");
+    let address = route.listener_address().await.expect("HTTPS address");
+
+    let config =
+        rustls::ClientConfig::builder().with_root_certificates(roots).with_no_client_auth();
+    let connector = tokio_rustls::TlsConnector::from(std::sync::Arc::new(config));
+    let stream = TcpStream::connect(address).await.expect("TLS connection");
+    let name = rustls::pki_types::ServerName::try_from("secure.localhost")
+        .expect("server name")
+        .to_owned();
+    let mut stream = connector.connect(name, stream).await.expect("TLS handshake");
+    stream
+        .write_all(b"GET / HTTP/1.1\r\nHost: secure.localhost\r\nConnection: close\r\n\r\n")
+        .await
+        .expect("request");
+    stream.shutdown().await.expect("request shutdown");
+    let mut response = String::new();
+    stream.read_to_string(&mut response).await.expect("response");
+
+    assert_eq!(response.split_once("\r\n\r\n").expect("response head").1, "secure");
     route.close().await;
 }
 

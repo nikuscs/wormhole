@@ -14,7 +14,10 @@ use crate::{
 async fn local_driver_registers_ready_url_and_cleans_up() {
     let target = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("target");
     let target = ResolvedTarget(target.local_addr().expect("target address"));
-    let driver = Arc::new(LocalDriver::isolated(0));
+    let directory = tempfile::tempdir().expect("CA directory");
+    let ca_directory = camino::Utf8PathBuf::from_path_buf(directory.path().to_owned())
+        .expect("UTF-8 CA directory");
+    let driver = Arc::new(LocalDriver::isolated(0, 0, ca_directory));
     let (events, mut receiver) = mpsc::channel(4);
     let stop = CancellationToken::new();
     let task = tokio::spawn({
@@ -25,14 +28,15 @@ async fn local_driver_registers_ready_url_and_cleans_up() {
 
     let event = receiver.recv().await.expect("ready event");
     let DriverEvent::Ready { urls, .. } = event else { panic!("expected ready event") };
-    assert!(urls[0].starts_with("http://app.localhost:"));
+    assert!(urls[0].starts_with("https://app.localhost:"));
+    assert!(urls[1].starts_with("http://app.localhost:"));
     stop.cancel();
     task.await.expect("driver task").expect("driver cleanup");
 }
 
 #[test]
 fn local_driver_rejects_tcp_missing_hosts_and_persistence() {
-    let driver = LocalDriver::isolated(0);
+    let driver = LocalDriver::isolated(0, 0, camino::Utf8PathBuf::from("."));
     let mut endpoint = spec();
     endpoint.proto = ServiceProto::Tcp;
     assert!(driver.validate(&endpoint).is_err());

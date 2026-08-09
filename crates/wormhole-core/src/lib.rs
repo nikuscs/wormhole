@@ -8,6 +8,7 @@ pub mod drivers;
 pub mod error;
 pub mod ifaces;
 pub mod keys_store;
+pub mod local_ca;
 pub mod local_router;
 pub mod manager;
 mod manager_events;
