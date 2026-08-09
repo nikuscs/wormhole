@@ -65,6 +65,15 @@ async fn stable_provider_specs_generate_hosts_and_external_ports() {
     assert_eq!(explicit_host[0].host.as_deref(), Some("manual"));
     assert_eq!(explicit_host[0].persist, Persistence::Temporary);
 
+    config.defaults.local_tld = "localhost".to_owned();
+    let local_options =
+        TunnelOptions { endpoint: vec!["local".to_owned()], ..TunnelOptions::default() };
+    let local = build_specs(ServiceProto::Http, &local_options, &config, Some("store-fix-cart"))
+        .await
+        .expect("local");
+    assert_eq!(local[0].host.as_deref(), Some("store-fix-cart.localhost"));
+    assert_eq!(local[0].persist, Persistence::Temporary);
+
     let tailscale =
         TunnelOptions { endpoint: vec!["tailscale".to_owned()], ..TunnelOptions::default() };
     let first = build_specs(ServiceProto::Http, &tailscale, &config, Some("store-fix-cart"))

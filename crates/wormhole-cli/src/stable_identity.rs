@@ -31,6 +31,12 @@ pub fn apply(
             }
             Ok(())
         }
+        ("local", _) => {
+            if spec.host.is_none() {
+                spec.host = Some(format!("{slug}.{}", config.defaults.local_tld));
+            }
+            Ok(())
+        }
         ("cloudflare", Some("named")) => apply_cloudflare(spec, slug, config),
         ("tailscale", qualifier) if spec.public_port.is_none() => {
             spec.public_port = Some(tailscale_port(slug, qualifier, config));

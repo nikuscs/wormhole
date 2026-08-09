@@ -1,0 +1,79 @@
+use std::net::SocketAddr;
+
+use tokio::{
+    io::{AsyncReadExt as _, AsyncWriteExt as _},
+    net::{TcpListener, TcpStream},
+};
+
+use super::LocalRouter;
+
+#[tokio::test]
+async fn routes_requests_by_normalized_host_and_removes_last_listener() {
+    let first = target_server(b"first").await;
+    let second = target_server(b"second").await;
+    let router = std::sync::Arc::new(LocalRouter::new());
+    let first_route = router.register(0, "One.Localhost", first).await.expect("first route");
+    let address = first_route.listener_address().await.expect("listener address");
+    let second_route = router.register(0, "two.localhost", second).await.expect("second route");
+
+    assert_eq!(request(address, "one.localhost:8123").await, "first");
+    assert_eq!(request(address, "TWO.LOCALHOST").await, "second");
+    assert_eq!(status(address, "missing.localhost").await, "HTTP/1.1 404 Not Found");
+
+    first_route.close().await;
+    assert_eq!(request(address, "two.localhost").await, "second");
+    second_route.close().await;
+    let rebound = TcpListener::bind(address).await.expect("last route released listener");
+    drop(rebound);
+}
+
+#[tokio::test]
+async fn rejects_duplicate_hostname_without_replacing_the_route() {
+    let first = target_server(b"first").await;
+    let second = target_server(b"second").await;
+    let router = std::sync::Arc::new(LocalRouter::new());
+    let route = router.register(0, "app.localhost", first).await.expect("route");
+    let address = route.listener_address().await.expect("listener address");
+
+    assert!(router.register(0, "APP.LOCALHOST", second).await.is_err());
+    assert_eq!(request(address, "app.localhost").await, "first");
+    route.close().await;
+}
+
+async fn target_server(body: &'static [u8]) -> SocketAddr {
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("target listener");
+    let address = listener.local_addr().expect("target address");
+    tokio::spawn(async move {
+        while let Ok((mut stream, _)) = listener.accept().await {
+            let mut request = [0_u8; 1024];
+            let _read = stream.read(&mut request).await;
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Length: {}\r\n\r\n",
+                body.len()
+            );
+            if stream.write_all(response.as_bytes()).await.is_ok() {
+                let _written = stream.write_all(body).await;
+            }
+        }
+    });
+    address
+}
+
+async fn request(address: SocketAddr, host: &str) -> String {
+    let response = exchange(address, host).await;
+    response.split_once("\r\n\r\n").expect("response head").1.to_owned()
+}
+
+async fn status(address: SocketAddr, host: &str) -> String {
+    exchange(address, host).await.lines().next().expect("status line").to_owned()
+}
+
+async fn exchange(address: SocketAddr, host: &str) -> String {
+    let mut stream = TcpStream::connect(address).await.expect("router connection");
+    let request = format!("GET / HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n\r\n");
+    stream.write_all(request.as_bytes()).await.expect("request");
+    stream.shutdown().await.expect("request shutdown");
+    let mut response = String::new();
+    stream.read_to_string(&mut response).await.expect("response");
+    response
+}

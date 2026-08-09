@@ -4,6 +4,7 @@ pub mod cloudflare;
 mod cloudflare_command;
 mod cloudflare_metrics;
 mod cloudflare_named;
+pub mod local;
 pub mod process;
 pub mod tailscale;
 mod tailscale_args;
@@ -33,5 +34,6 @@ pub fn build_registry(config: &ClientConfig, identities: Arc<IdentityStore>) -> 
         config.defaults.tailscale_https_port_range,
     )));
     registry.register(Arc::new(cloudflare::CloudflareDriver::system()));
+    registry.register(Arc::new(local::LocalDriver::new(config.defaults.local_http_port)));
     registry
 }

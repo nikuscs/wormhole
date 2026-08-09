@@ -4,8 +4,11 @@ use tempfile::tempdir;
 use super::{ClientConfig, ConfigLayer};
 
 #[test]
-fn stable_worktree_urls_are_enabled_without_configuration() {
-    assert!(ClientConfig::default().defaults.stable_worktree_urls);
+fn stable_worktree_urls_and_local_settings_have_portless_defaults() {
+    let defaults = ClientConfig::default().defaults;
+    assert!(defaults.stable_worktree_urls);
+    assert_eq!(defaults.local_tld, "localhost");
+    assert_eq!((defaults.local_http_port, defaults.local_https_port), (80, 443));
 }
 
 #[test]
@@ -121,6 +124,35 @@ fn validation_rejects_invalid_remote_references_addresses_and_defaults() {
     config.defaults.cloudflare_domain = None;
     config.defaults.tailscale_https_port_range = super::HttpsPortRange { start: 0, end: 10 };
     assert!(config.validate().is_err());
+
+    config.defaults.tailscale_https_port_range = super::HttpsPortRange::default();
+    config.defaults.local_tld = "Invalid TLD".to_owned();
+    assert!(config.validate().is_err());
+    config.defaults.local_tld = "localhost".to_owned();
+    config.defaults.local_http_port = 0;
+    assert!(config.validate().is_err());
+}
+
+#[test]
+fn local_settings_merge_across_layers() {
+    let directory = tempdir().expect("temporary directory");
+    let root = Utf8Path::from_path(directory.path()).expect("UTF-8 path");
+    let global = root.join("global.toml");
+    let project = root.join("wormhole.toml");
+    std::fs::write(
+        &global,
+        "[defaults]\nlocal_tld = \"test\"\nlocal_http_port = 8080\nlocal_https_port = 8443\n",
+    )
+    .expect("global config");
+    std::fs::write(&project, "[defaults]\nlocal_tld = \"localhost\"\n").expect("project config");
+    let explicit = toml::from_str("[defaults]\nlocal_http_port = 9080\n").expect("layer");
+
+    let config = ClientConfig::load_from_paths(Some(&global), Some(&project), explicit)
+        .expect("merged config");
+
+    assert_eq!(config.defaults.local_tld, "localhost");
+    assert_eq!(config.defaults.local_http_port, 9080);
+    assert_eq!(config.defaults.local_https_port, 8443);
 }
 
 #[test]

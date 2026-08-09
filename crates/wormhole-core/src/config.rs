@@ -44,6 +44,21 @@ pub struct ClientDefaults {
     /// External HTTPS range used for generated Tailscale Serve ports.
     #[serde(default, skip_serializing_if = "is_default_https_port_range")]
     pub tailscale_https_port_range: HttpsPortRange,
+    /// DNS suffix used for local Host-routing endpoints.
+    #[serde(default = "default_local_tld", skip_serializing_if = "is_default_local_tld")]
+    pub local_tld: String,
+    /// Loopback HTTP listener port used by the local driver.
+    #[serde(
+        default = "default_local_http_port",
+        skip_serializing_if = "is_default_local_http_port"
+    )]
+    pub local_http_port: u16,
+    /// Loopback HTTPS listener port used by the local driver.
+    #[serde(
+        default = "default_local_https_port",
+        skip_serializing_if = "is_default_local_https_port"
+    )]
+    pub local_https_port: u16,
     /// Unknown forward-compatible settings.
     #[serde(default, flatten)]
     extra: BTreeMap<String, toml::Value>,
@@ -59,6 +74,9 @@ impl Default for ClientDefaults {
             domain: None,
             cloudflare_domain: None,
             tailscale_https_port_range: HttpsPortRange::default(),
+            local_tld: default_local_tld(),
+            local_http_port: default_local_http_port(),
+            local_https_port: default_local_https_port(),
             extra: BTreeMap::new(),
         }
     }
@@ -100,6 +118,12 @@ pub struct DefaultsLayer {
     pub cloudflare_domain: Option<String>,
     /// Optional Tailscale external HTTPS range.
     pub tailscale_https_port_range: Option<HttpsPortRange>,
+    /// Optional local hostname DNS suffix.
+    pub local_tld: Option<String>,
+    /// Optional local HTTP listener port.
+    pub local_http_port: Option<u16>,
+    /// Optional local HTTPS listener port.
+    pub local_https_port: Option<u16>,
     /// Unknown forward-compatible settings.
     #[serde(default, flatten)]
     extra: BTreeMap<String, toml::Value>,
@@ -135,6 +159,32 @@ const fn is_false(value: &bool) -> bool {
 #[allow(clippy::trivially_copy_pass_by_ref)]
 fn is_default_https_port_range(value: &HttpsPortRange) -> bool {
     *value == HttpsPortRange::default()
+}
+
+fn default_local_tld() -> String {
+    "localhost".to_owned()
+}
+
+const fn default_local_http_port() -> u16 {
+    80
+}
+
+const fn default_local_https_port() -> u16 {
+    443
+}
+
+fn is_default_local_tld(value: &String) -> bool {
+    value == "localhost"
+}
+
+#[allow(clippy::trivially_copy_pass_by_ref)]
+const fn is_default_local_http_port(value: &u16) -> bool {
+    *value == default_local_http_port()
+}
+
+#[allow(clippy::trivially_copy_pass_by_ref)]
+const fn is_default_local_https_port(value: &u16) -> bool {
+    *value == default_local_https_port()
 }
 
 #[derive(Deserialize)]
@@ -262,13 +312,26 @@ impl ClientConfig {
                 return Err(ConfigError::Invalid(format!("{key} must be a lowercase DNS domain")));
             }
         }
+        if !valid_dns_suffix(&self.defaults.local_tld) {
+            return Err(ConfigError::Invalid(
+                "defaults.local_tld must be a lowercase DNS suffix".to_owned(),
+            ));
+        }
+        if self.defaults.local_http_port == 0 || self.defaults.local_https_port == 0 {
+            return Err(ConfigError::Invalid(
+                "defaults local HTTP and HTTPS ports must be non-zero".to_owned(),
+            ));
+        }
         Ok(())
     }
 }
 
 fn valid_dns_domain(value: &str) -> bool {
+    value.contains('.') && valid_dns_suffix(value)
+}
+
+fn valid_dns_suffix(value: &str) -> bool {
     value.len() <= 253
-        && value.contains('.')
         && value.split('.').all(|label| {
             !label.is_empty()
                 && label.len() <= 63
@@ -351,6 +414,15 @@ fn merge(config: &mut ClientConfig, layer: ConfigLayer) {
         }
         if let Some(range) = defaults.tailscale_https_port_range {
             config.defaults.tailscale_https_port_range = range;
+        }
+        if let Some(tld) = defaults.local_tld {
+            config.defaults.local_tld = tld;
+        }
+        if let Some(port) = defaults.local_http_port {
+            config.defaults.local_http_port = port;
+        }
+        if let Some(port) = defaults.local_https_port {
+            config.defaults.local_https_port = port;
         }
     }
     config.extra.extend(layer.extra);
