@@ -10,6 +10,7 @@ pub mod ifaces;
 pub mod keys_store;
 pub mod local_ca;
 pub mod local_router;
+pub mod local_system;
 pub mod manager;
 mod manager_events;
 mod manager_status;

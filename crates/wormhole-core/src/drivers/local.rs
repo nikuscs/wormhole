@@ -13,6 +13,7 @@ use crate::{
     error::DriverError,
     local_ca::{LocalCertResolver, LocalCertificateAuthority},
     local_router::{LocalRouter, RouteRegistration, shared},
+    local_system::elevation_enabled,
     model::{EndpointSpec, ResolvedTarget, ServiceProto},
 };
 
@@ -129,7 +130,8 @@ impl TunnelDriver for LocalDriver {
                     return Err(error);
                 }
             };
-        let urls = endpoint_urls(hostname, &http, &https).await?;
+        let portless = self.ca_directory.as_deref().is_some_and(elevation_enabled);
+        let urls = endpoint_urls(hostname, &http, &https, portless).await?;
         if events.send(DriverEvent::Ready { urls, bind_id: None, reservation: None }).await.is_err()
         {
             close_routes(http, https).await;
@@ -145,9 +147,10 @@ async fn endpoint_urls(
     hostname: &str,
     http: &RouteRegistration,
     https: &RouteRegistration,
+    portless: bool,
 ) -> Result<Vec<String>, DriverError> {
-    let clear_port = listener_port(http).await?;
-    let tls_port = listener_port(https).await?;
+    let clear_port = if portless { 80 } else { listener_port(http).await? };
+    let tls_port = if portless { 443 } else { listener_port(https).await? };
     Ok(vec![
         local_url("https", hostname, tls_port, 443),
         local_url("http", hostname, clear_port, 80),

@@ -24,6 +24,7 @@ Commands:
   remote       Manage named Wormhole remotes
   key          Manage the client identity key
   doctor       Run structured health checks
+  local        Manage local hostname integration
   daemon       Manage the per-user daemon
   completions  Generate shell completions
   share        Create an expiring share link

@@ -72,6 +72,11 @@ pub enum Command {
     },
     /// Run structured health checks.
     Doctor,
+    /// Manage local hostname integration.
+    Local {
+        #[command(subcommand)]
+        command: LocalCommand,
+    },
     /// Manage the per-user daemon.
     Daemon {
         #[command(subcommand)]
@@ -270,6 +275,59 @@ pub enum KeyCommand {
     Show,
     /// Generate a new identity key.
     Rotate,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum LocalCommand {
+    /// Install the Wormhole local CA in the operating-system trust store.
+    Trust {
+        /// Apply without an interactive confirmation.
+        #[arg(short = 'y', long)]
+        yes: bool,
+    },
+    /// Remove the Wormhole local CA from the operating-system trust store.
+    Untrust {
+        /// Apply without an interactive confirmation.
+        #[arg(short = 'y', long)]
+        yes: bool,
+    },
+    /// Manage the Wormhole block in the hosts file.
+    Hosts {
+        #[command(subcommand)]
+        command: LocalHostsCommand,
+    },
+    /// Install the root-owned 80/443 loopback forwarding service.
+    Elevate {
+        /// Apply without an interactive confirmation.
+        #[arg(short = 'y', long)]
+        yes: bool,
+    },
+    /// Root-owned loopback forwarder installed by `local elevate`.
+    #[command(hide = true)]
+    PrivilegedForward {
+        #[arg(long)]
+        clear_target: u16,
+        #[arg(long)]
+        tls_target: u16,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum LocalHostsCommand {
+    /// Replace the managed hosts block with these local hostnames.
+    Sync {
+        #[arg(required = true)]
+        hostnames: Vec<String>,
+        /// Apply without an interactive confirmation.
+        #[arg(short = 'y', long)]
+        yes: bool,
+    },
+    /// Remove the managed hosts block.
+    Clear {
+        /// Apply without an interactive confirmation.
+        #[arg(short = 'y', long)]
+        yes: bool,
+    },
 }
 
 #[derive(Debug, Subcommand)]

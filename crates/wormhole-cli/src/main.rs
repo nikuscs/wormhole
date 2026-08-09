@@ -17,6 +17,7 @@ mod future_api;
 mod local_api;
 mod local_api_auth;
 mod local_api_remotes;
+mod local_commands;
 mod local_proxy;
 #[cfg(debug_assertions)]
 mod mock_driver;
@@ -105,9 +106,7 @@ async fn execute(cli: &Cli) -> Result<(), CliError> {
                 .await;
         }
         Command::Ls(args) => return tunnel_commands::list(cli, args.watch).await,
-        Command::Down(args) => {
-            return project_commands::down(cli, &args.targets, args.forget).await;
-        }
+        Command::Down(args) => project_commands::down(cli, &args.targets, args.forget).await,
         Command::Up(args) => return project_commands::up(cli, &args.services).await,
         Command::Run(args) => return run_command::execute(cli, args).await,
         Command::Domains => return utility_commands::domains(cli).await,
@@ -118,7 +117,8 @@ async fn execute(cli: &Cli) -> Result<(), CliError> {
         Command::Remote { command } => return utility_commands::remote(cli, command).await,
         Command::Key { command } => utility_commands::key(cli, command),
         Command::Interfaces => return utility_commands::interfaces(cli).await,
-        Command::Doctor => return utility_commands::doctor(cli).await,
+        Command::Doctor => utility_commands::doctor(cli).await,
+        Command::Local { command } => local_commands::execute(cli, command).await,
         Command::Completions { shell } => utility_commands::completions(*shell),
         Command::Inspect { request_id } => {
             let id = request_id

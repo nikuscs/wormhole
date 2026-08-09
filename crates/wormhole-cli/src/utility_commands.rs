@@ -175,7 +175,10 @@ pub async fn interfaces(cli: &Cli) -> Result<(), CliError> {
 
 pub async fn doctor(cli: &Cli) -> Result<(), CliError> {
     let client = DaemonClient::ensure(cli.config.as_ref()).await?;
-    output::emit(super::format(cli.json), &client.doctor().await?);
+    let mut checks = client.doctor().await?;
+    let config = load(cli.config.as_ref())?;
+    checks.extend(crate::local_commands::doctor_checks(&config).await);
+    output::emit(super::format(cli.json), &checks);
     Ok(())
 }
 

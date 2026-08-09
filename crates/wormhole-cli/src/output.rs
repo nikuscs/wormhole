@@ -199,6 +199,11 @@ pub fn emit_error(error: &dyn std::fmt::Display, hint: Option<&str>) {
     }
 }
 
+/// Prints an exact consequential command to stderr before execution.
+pub fn preview_command(command: &str) {
+    eprintln!("command: {command}");
+}
+
 /// Writes an interactive prompt to stderr without contaminating stdout.
 pub fn prompt(message: &str) -> Result<(), std::io::Error> {
     let mut stderr = std::io::stderr();
