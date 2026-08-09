@@ -55,3 +55,4 @@ wormhole-proto = { path = "../wormhole-proto" }
 [dev-dependencies]
 insta.workspace = true
 tempfile.workspace = true
+x509-parser.workspace = true

@@ -4504,6 +4504,7 @@ dependencies = [
  "uuid",
  "webpki-roots 1.0.9",
  "wormhole-proto",
+ "x509-parser",
 ]
 
 [[package]]
