@@ -111,9 +111,15 @@ impl RouteRegistration {
 }
 
 async fn bind_listener(port: u16) -> Result<ListenerState, DriverError> {
-    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, port))
-        .await
-        .map_err(|error| DriverError::Transport(format!("local listener bind failed: {error}")))?;
+    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, port)).await.map_err(|error| {
+        if error.kind() == std::io::ErrorKind::PermissionDenied {
+            DriverError::Transport(format!(
+                "defaults.local_http_port {port} requires privileged binding; configure an unprivileged port or enable the explicit local elevation opt-in"
+            ))
+        } else {
+            DriverError::Transport(format!("local listener bind failed on port {port}: {error}"))
+        }
+    })?;
     let address = listener.local_addr().map_err(|error| {
         DriverError::Transport(format!("local listener address failed: {error}"))
     })?;
@@ -136,7 +142,8 @@ async fn accept_loop(listener: TcpListener, routes: Routes, stop: CancellationTo
 }
 
 async fn route_connection(mut incoming: TcpStream, routes: Routes) {
-    let Ok((head, hostname)) = read_request_head(&mut incoming).await else {
+    // A connection stays with its first Host; browsers pool HTTP/1 connections per origin.
+    let Ok((buffered, hostname)) = read_request_head(&mut incoming).await else {
         return;
     };
     let target = routes.read().get(&hostname).copied();
@@ -154,29 +161,34 @@ async fn route_connection(mut incoming: TcpStream, routes: Routes) {
             .await;
         return;
     };
-    if outgoing.write_all(&head).await.is_ok() {
+    if outgoing.write_all(&buffered).await.is_ok() {
         let _copied = tokio::io::copy_bidirectional(&mut incoming, &mut outgoing).await;
     }
 }
 
 async fn read_request_head(stream: &mut TcpStream) -> Result<(Vec<u8>, String), ()> {
-    let mut head = Vec::with_capacity(1024);
+    let mut buffered = Vec::with_capacity(1024);
+    let mut search_from = 0;
     loop {
-        if head.windows(4).any(|bytes| bytes == b"\r\n\r\n") {
-            let hostname = host_header(&head).ok_or(())?;
-            return Ok((head, hostname));
+        if let Some(offset) =
+            buffered[search_from..].windows(4).position(|bytes| bytes == b"\r\n\r\n")
+        {
+            let head_end = search_from + offset + 4;
+            let hostname = host_header(&buffered[..head_end]).ok_or(())?;
+            return Ok((buffered, hostname));
         }
-        if head.len() >= MAX_REQUEST_HEAD {
+        if buffered.len() >= MAX_REQUEST_HEAD {
             return Err(());
         }
-        let remaining = MAX_REQUEST_HEAD - head.len();
+        search_from = buffered.len().saturating_sub(3);
+        let remaining = MAX_REQUEST_HEAD - buffered.len();
         let mut chunk = [0_u8; 2048];
         let read_limit = remaining.min(chunk.len());
         let read = stream.read(&mut chunk[..read_limit]).await.map_err(|_| ())?;
         if read == 0 {
             return Err(());
         }
-        head.extend_from_slice(&chunk[..read]);
+        buffered.extend_from_slice(&chunk[..read]);
     }
 }
 

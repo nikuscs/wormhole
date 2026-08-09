@@ -8,7 +8,7 @@ fn stable_worktree_urls_and_local_settings_have_portless_defaults() {
     let defaults = ClientConfig::default().defaults;
     assert!(defaults.stable_worktree_urls);
     assert_eq!(defaults.local_tld, "localhost");
-    assert_eq!((defaults.local_http_port, defaults.local_https_port), (80, 443));
+    assert_eq!((defaults.local_http_port, defaults.local_https_port), (20_080, 20_443));
 }
 
 #[test]
