@@ -47,7 +47,7 @@ pub async fn execute(cli: &Cli, args: &RunArgs) -> Result<(), CliError> {
     };
     let spinner = output::spinner("waiting for endpoints", cli.json);
     let exposure: Result<_, CliError> = if args.options.foreground {
-        crate::tunnel_commands::start_foreground(service, specs, config)
+        crate::tunnel_commands::start_foreground(service, specs, config, super::config_path(cli))
             .await
             .map(|(manager, endpoints)| (None, Some(manager), endpoints))
     } else {

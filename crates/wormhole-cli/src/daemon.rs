@@ -76,7 +76,11 @@ impl DaemonServer {
         let tcp_listener = bind_loopback_api().await?;
         let config = load_config(config_path)?;
         let identities = Arc::new(IdentityStore::from_environment()?);
-        let registry = build_registry(&config, Arc::clone(&identities));
+        let registry = build_registry(
+            &config,
+            Arc::clone(&identities),
+            config_path.and_then(|path| camino::Utf8Path::from_path(path)),
+        );
         #[cfg(debug_assertions)]
         if std::env::var_os("WORMHOLE_ENABLE_MOCK_DRIVER").as_deref()
             == Some(std::ffi::OsStr::new("1"))

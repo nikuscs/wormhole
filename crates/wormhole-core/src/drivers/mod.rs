@@ -25,7 +25,15 @@ use crate::{
 };
 
 /// Builds the production driver registry from effective client configuration.
-pub fn build_registry(config: &ClientConfig, identities: Arc<IdentityStore>) -> DriverRegistry {
+///
+/// `config_path` is the configuration file the effective config was loaded from, so state derived
+/// from it — such as the local certificate authority — follows an explicit `--config` override
+/// instead of always landing beside the global configuration file.
+pub fn build_registry(
+    config: &ClientConfig,
+    identities: Arc<IdentityStore>,
+    config_path: Option<&camino::Utf8Path>,
+) -> DriverRegistry {
     let registry = DriverRegistry::new();
     registry.register(Arc::new(WormholeDriver::new(
         config.remotes.clone(),
@@ -36,12 +44,18 @@ pub fn build_registry(config: &ClientConfig, identities: Arc<IdentityStore>) -> 
         config.defaults.tailscale_https_port_range,
     )));
     registry.register(Arc::new(cloudflare::CloudflareDriver::system()));
-    let ca_directory =
-        global_config_path().ok().and_then(|path| path.parent().map(camino::Utf8Path::to_owned));
     registry.register(Arc::new(local::LocalDriver::new(
         config.defaults.local_http_port,
         config.defaults.local_https_port,
-        ca_directory,
+        config_directory(config_path),
     )));
     registry
+}
+
+/// Directory holding state derived from the effective configuration file.
+fn config_directory(config_path: Option<&camino::Utf8Path>) -> Option<camino::Utf8PathBuf> {
+    config_path
+        .map(camino::Utf8Path::to_owned)
+        .or_else(|| global_config_path().ok())
+        .and_then(|path| path.parent().map(camino::Utf8Path::to_owned))
 }

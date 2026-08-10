@@ -82,7 +82,11 @@ async fn persist_and_apply(
 ) -> Result<(), ApiError> {
     save(state.config_path.as_ref(), &config)
         .map_err(|error| ApiError::internal(error.to_string()))?;
-    let registry = wormhole_core::drivers::build_registry(&config, state.identities.clone());
+    let registry = wormhole_core::drivers::build_registry(
+        &config,
+        state.identities.clone(),
+        state.config_path.as_deref().and_then(camino::Utf8Path::from_path),
+    );
     for driver in registry.all().into_iter().filter(|driver| driver.name() == "wormhole") {
         state.manager.registry().register(driver);
     }

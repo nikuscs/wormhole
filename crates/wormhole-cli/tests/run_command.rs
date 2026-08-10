@@ -282,6 +282,20 @@ struct Fixture {
     directory: tempfile::TempDir,
 }
 
+impl Drop for Fixture {
+    /// Stops the auto-spawned daemon before the isolated state directory disappears.
+    ///
+    /// Without this, a test that panics before calling `stop` leaves a detached daemon running
+    /// against a deleted state directory, where it survives the test run indefinitely.
+    fn drop(&mut self) {
+        let _stopped = self
+            .command(&["daemon", "stop", "--json"])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status();
+    }
+}
+
 impl Fixture {
     fn new() -> Self {
         let directory = tempfile::tempdir().expect("tempdir");

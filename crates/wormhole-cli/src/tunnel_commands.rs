@@ -45,7 +45,7 @@ pub async fn expose(cli: &Cli, args: &TunnelArgs, proto: ServiceProto) -> Result
     let service = Service { name, target, proto };
     let spinner = output::spinner("waiting for endpoints", cli.json);
     if args.options.foreground {
-        let result = start_foreground(service, specs, config).await;
+        let result = start_foreground(service, specs, config, super::config_path(cli)).await;
         output::finish_spinner(spinner);
         let (manager, mut endpoints) = result?;
         crate::local_notices::apply(&mut endpoints, &notices);
@@ -84,8 +84,12 @@ pub async fn list(cli: &Cli, watch: bool) -> Result<(), CliError> {
     let mut wait = false;
     loop {
         let services = client.services(wait).await?;
-        let endpoints =
+        let mut endpoints =
             services.into_iter().flat_map(|service| service.endpoints).collect::<Vec<_>>();
+        crate::local_notices::annotate_active(
+            &mut endpoints,
+            &crate::local_notices::read_managed_hosts(),
+        );
         output::emit(super::format(cli.json), &endpoints);
         if !watch {
             return Ok(());
@@ -247,9 +251,10 @@ pub async fn start_foreground(
     service: Service,
     specs: Vec<EndpointSpec>,
     config: ClientConfig,
+    config_path: Option<&camino::Utf8Path>,
 ) -> Result<(Arc<TunnelManager>, Vec<ActiveEndpoint>), CliError> {
     let identities = Arc::new(IdentityStore::from_environment()?);
-    let registry = build_registry(&config, identities);
+    let registry = build_registry(&config, identities, config_path);
     #[cfg(debug_assertions)]
     if std::env::var_os("WORMHOLE_ENABLE_MOCK_DRIVER").as_deref() == Some(std::ffi::OsStr::new("1"))
     {

@@ -41,7 +41,7 @@ pub async fn doctor() -> Vec<DoctorCheck> {
             ];
         }
     };
-    let registry = build_registry(&config, Arc::clone(&identities));
+    let registry = build_registry(&config, Arc::clone(&identities), None);
     doctor_with(&config, &registry, &identities).await
 }
 

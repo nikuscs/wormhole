@@ -182,3 +182,8 @@ async fn inspection(cli: &Cli, args: &cli::RequestsArgs) -> Result<(), CliError>
 const fn format(json: bool) -> output::Format {
     if json { output::Format::Json } else { output::Format::Human }
 }
+
+/// Effective configuration file, so state derived from it follows a `--config` override.
+fn config_path(cli: &Cli) -> Option<&camino::Utf8Path> {
+    cli.config.as_deref().and_then(camino::Utf8Path::from_path)
+}
