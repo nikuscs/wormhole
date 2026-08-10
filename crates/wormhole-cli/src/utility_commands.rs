@@ -177,7 +177,7 @@ pub async fn doctor(cli: &Cli) -> Result<(), CliError> {
     let client = DaemonClient::ensure(cli.config.as_ref()).await?;
     let mut checks = client.doctor().await?;
     let config = load(cli.config.as_ref())?;
-    checks.extend(crate::local_commands::doctor_checks(&config).await);
+    checks.extend(crate::local_commands::doctor_checks(&config, super::config_path(cli)).await);
     output::emit(super::format(cli.json), &checks);
     Ok(())
 }

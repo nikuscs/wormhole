@@ -51,8 +51,9 @@ pub async fn execute(cli: &Cli, command: &LocalCommand) -> Result<(), CliError> 
 
 pub async fn doctor_checks(
     config: &wormhole_core::ClientConfig,
+    config_path: Option<&Utf8Path>,
 ) -> Vec<wormhole_core::model::DoctorCheck> {
-    let directory = match config_directory() {
+    let directory = match config_directory(config_path) {
         Ok(directory) => directory,
         Err(error) => {
             return vec![doctor_check("local:ca-trust", false, error.to_string())];
@@ -78,7 +79,7 @@ pub async fn doctor_checks(
 }
 
 fn trust(cli: &Cli, install: bool, yes: bool) -> Result<(), CliError> {
-    let directory = config_directory()?;
+    let directory = config_directory(super::config_path(cli))?;
     let ca_path = if install {
         LocalCertificateAuthority::load_or_create(&directory)
             .map_err(|error| CliError::Invalid(error.to_string()))?
@@ -117,7 +118,7 @@ fn hosts(cli: &Cli, command: &LocalHostsCommand) -> Result<(), CliError> {
         );
         return Ok(());
     }
-    let directory = config_directory()?;
+    let directory = config_directory(super::config_path(cli))?;
     let temporary = temporary_file(&directory, &rendered)?;
     let path = utf8_path(temporary.path())?;
     let result = apply_commands(
@@ -132,7 +133,7 @@ fn hosts(cli: &Cli, command: &LocalHostsCommand) -> Result<(), CliError> {
 
 fn elevate(cli: &Cli, yes: bool) -> Result<(), CliError> {
     let config = utility_commands::load(cli.config.as_ref())?;
-    let directory = config_directory()?;
+    let directory = config_directory(super::config_path(cli))?;
     let executable = std::env::current_exe()?;
     let executable =
         verify_executable_source(&utf8_path(&executable)?).map_err(CliError::Invalid)?;
@@ -157,7 +158,7 @@ fn elevate(cli: &Cli, yes: bool) -> Result<(), CliError> {
 }
 
 fn unelevate(cli: &Cli, yes: bool) -> Result<(), CliError> {
-    let directory = config_directory()?;
+    let directory = config_directory(super::config_path(cli))?;
     let result = apply_commands(
         "local privileged ports removal",
         unelevation_commands(LocalPlatform::current()),
@@ -267,11 +268,12 @@ fn p11_kit_available() -> bool {
     std::path::Path::new("/usr/bin/trust").is_file() || std::path::Path::new("/bin/trust").is_file()
 }
 
-fn config_directory() -> Result<Utf8PathBuf, CliError> {
-    global_config_path()?
+fn config_directory(config_path: Option<&Utf8Path>) -> Result<Utf8PathBuf, CliError> {
+    config_path
+        .map_or_else(global_config_path, |path| Ok(path.to_owned()))?
         .parent()
         .map(Utf8Path::to_owned)
-        .ok_or_else(|| CliError::Invalid("global configuration path has no parent".to_owned()))
+        .ok_or_else(|| CliError::Invalid("configuration path has no parent".to_owned()))
 }
 
 fn temporary_file(
