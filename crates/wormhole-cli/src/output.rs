@@ -204,6 +204,11 @@ pub fn preview_command(command: &str) {
     eprintln!("command: {command}");
 }
 
+/// Prints a non-fatal caution to stderr before a consequential command.
+pub fn preview_warning(warning: &str) {
+    eprintln!("warning: {warning}");
+}
+
 /// Writes an interactive prompt to stderr without contaminating stdout.
 pub fn prompt(message: &str) -> Result<(), std::io::Error> {
     let mut stderr = std::io::stderr();

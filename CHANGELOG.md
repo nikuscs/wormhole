@@ -7,6 +7,32 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- `wormhole local trust` reported success on macOS while leaving the authority untrusted, so local
+  HTTPS was still rejected. Privileged commands ran with their output captured and no terminal, so
+  neither `sudo` nor the system prompt could ask for confirmation, and `security add-trusted-cert`
+  exits zero when it cannot ask. Those commands now keep the terminal, the trust probe reads back
+  trust settings rather than mere certificate presence, and `trust` verifies the result.
+- `wormhole local trust` failed outright on Debian and Ubuntu, which have neither
+  `/etc/pki/ca-trust/source/anchors` nor `update-ca-trust`. The layout is now detected, using
+  p11-kit when present and `update-ca-certificates` on the Debian family.
+- Local endpoints served only IPv4 while `*.localhost` resolves to `::1` first. Plain HTTP survived
+  by falling back, but TLS failed outright. Both loopbacks are now served on the same port.
+- `wormhole local elevate` refused every Homebrew installation, whose prefix is group-writable by
+  `admin`, a group whose members can already become root. The check now verifies the root-owned
+  destination the service actually executes, and a writable source only warns.
+- `wormhole local hosts sync <hostname>` rejected valid names by validating the configured suffix
+  instead of the hostname given, reporting `.localhost` for a host that was never typed. Each
+  hostname is now judged on its own suffix.
+- The managed hosts block is written in place, so it succeeds where the hosts file is a bind mount.
+- `--config` was ignored when locating the local certificate authority and the trust, hosts, and
+  elevation commands, which used the global configuration directory regardless.
+- `wormhole ls` omitted the hosts-sync hint, which was computed once while exposing and never
+  recomputed from live endpoints.
+- Integration tests left detached daemons running after a failure, which outlived both their
+  temporary state directories and the test run.
+
 ## [0.2.0] - 2026-08-11
 
 ### Added

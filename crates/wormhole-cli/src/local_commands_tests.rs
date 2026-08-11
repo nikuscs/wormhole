@@ -41,10 +41,18 @@ fn confirmed_actions_run_in_order_and_report_both_output_contracts() {
     assert_eq!(json["commands"][0], "first one");
 }
 
+/// Each hostname is judged on its own suffix. Scoping to the configured suffix instead rejected
+/// `app.test` with a complaint about `.localhost` whenever `local_tld` was still the default,
+/// naming a host the user had not typed. A hostname outside the configured suffix is now allowed:
+/// it was named explicitly and the exact hosts-file change is shown before it is applied.
 #[test]
-fn custom_hosts_are_scoped_and_localhost_needs_no_block() {
+fn hosts_are_validated_on_their_own_suffix_not_the_configured_one() {
+    assert!(validate_hosts(&["app.test".to_owned()], "localhost").is_ok());
     assert!(validate_hosts(&["app.test".to_owned()], "test").is_ok());
-    assert!(validate_hosts(&["app.other".to_owned()], "test").is_err());
-    assert!(validate_hosts(&["App.test".to_owned()], "test").is_err());
-    assert!(validate_hosts(&["app.localhost".to_owned()], "localhost").is_err());
+    assert!(validate_hosts(&["app.other".to_owned()], "test").is_ok());
+
+    let localhost = validate_hosts(&["app.localhost".to_owned()], "test").expect_err("no entry");
+    assert!(localhost.to_string().contains("needs no sync"), "{localhost}");
+    assert!(validate_hosts(&["App.test".to_owned()], "test").is_err(), "uppercase is rejected");
+    assert!(validate_hosts(&["app".to_owned()], "test").is_err(), "bare labels are rejected");
 }

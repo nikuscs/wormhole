@@ -4,7 +4,7 @@ description: Expose local HTTP/TCP services and dev commands with Wormhole. Use 
 license: MIT
 compatibility: Requires the wormhole CLI; providers may require a configured relay, Tailscale, or cloudflared.
 metadata:
-  version: "1.3.0"
+  version: "1.4.0"
 ---
 
 # Wormhole CLI
@@ -58,6 +58,33 @@ wormhole http <PORT> --endpoint cloudflare:quick
 wormhole http <PORT> --endpoint cloudflare:named --host <FQDN> --persist
 wormhole http <PORT> --endpoint wormhole --endpoint tailscale
 ```
+
+## Local domains: never run the privileged commands unasked
+
+`--endpoint local` serves the service on a local hostname instead of a public URL. Use it when the
+user wants a local name rather than sharing, and stop there:
+
+```sh
+wormhole http <PORT> --endpoint local              # https://<name>.localhost:20443
+wormhole http <PORT> --endpoint local --tld test   # needs a hosts entry
+```
+
+The default `.localhost` needs no DNS, no hosts entry, and no elevation. Browsers resolve it and
+treat it as a secure context. On Linux that is browser-only: glibc does not resolve
+`app.localhost`, so `curl` there needs a hosts entry even on the default.
+
+Everything below changes the machine. Report the command and let the user run it; never run it for
+them, and never pass `--yes` on their behalf.
+
+| User wants | Tell them to run | What it changes |
+| --- | --- | --- |
+| Trusted HTTPS, no browser warning | `wormhole local trust` | installs the local CA in the system trust store |
+| A suffix other than `.localhost` | `wormhole local hosts sync <hostname>` | adds a marked block to `/etc/hosts` |
+| URLs with no port at all | `wormhole local elevate` | installs a root-owned service on ports 80 and 443 |
+
+Each has an exact inverse: `local untrust`, `local hosts clear`, `local unelevate`. Prefer `.test`
+or `.internal` for a custom suffix; `.local` collides with mDNS. `wormhole doctor` reports CA trust,
+the hosts block, and listener reachability.
 
 Put endpoint flags before `--` with `wormhole run`.
 

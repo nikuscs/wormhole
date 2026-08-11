@@ -5,9 +5,9 @@ use std::{fs, process::Command};
 use camino::Utf8Path;
 
 pub use crate::local_elevation::{
-    ELEVATION_MARKER, elevation_commands, elevation_enabled, forwarder_definition,
-    remove_elevation_marker, root_forwarder_path, unelevation_commands, verify_executable_source,
-    write_elevation_marker,
+    ELEVATION_MARKER, elevation_activate_commands, elevation_enabled, elevation_install_commands,
+    forwarder_definition, remove_elevation_marker, resolve_executable_source, root_forwarder_path,
+    unelevation_commands, verify_forwarder_destination, write_elevation_marker,
 };
 
 pub const HOSTS_BEGIN: &str = "# BEGIN WORMHOLE LOCAL";
@@ -28,6 +28,23 @@ impl LocalPlatform {
         return Self::Linux;
     }
 }
+
+/// How a Linux distribution stores additional certificate authorities.
+///
+/// Debian and Red Hat families use different directories and different refresh commands, and
+/// assuming one breaks `local trust` outright on the other.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LinuxTrust {
+    /// p11-kit `trust`, when available, handles either family.
+    P11Kit,
+    /// `/usr/local/share/ca-certificates` refreshed by `update-ca-certificates`.
+    Debian,
+    /// `/etc/pki/ca-trust/source/anchors` refreshed by `update-ca-trust`.
+    RedHat,
+}
+
+pub const DEBIAN_ANCHOR: &str = "/usr/local/share/ca-certificates/wormhole-local-ca.crt";
+pub const REDHAT_ANCHOR: &str = "/etc/pki/ca-trust/source/anchors/wormhole-local-ca.pem";
 
 /// One exact external command, without shell interpretation.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -86,7 +103,11 @@ impl CommandRunner for SystemCommandRunner {
     }
 }
 
-pub fn trust_commands(platform: LocalPlatform, ca: &Utf8Path, p11_kit: bool) -> Vec<CommandSpec> {
+pub fn trust_commands(
+    platform: LocalPlatform,
+    ca: &Utf8Path,
+    linux: LinuxTrust,
+) -> Vec<CommandSpec> {
     match platform {
         LocalPlatform::MacOs => vec![command(
             "sudo",
@@ -101,26 +122,25 @@ pub fn trust_commands(platform: LocalPlatform, ca: &Utf8Path, p11_kit: bool) -> 
                 ca.as_str(),
             ],
         )],
-        LocalPlatform::Linux if p11_kit => {
-            vec![command("sudo", &["trust", "anchor", ca.as_str()])]
-        }
-        LocalPlatform::Linux => vec![
-            command(
-                "sudo",
-                &[
-                    "install",
-                    "-m",
-                    "0644",
-                    ca.as_str(),
-                    "/etc/pki/ca-trust/source/anchors/wormhole-local-ca.pem",
-                ],
-            ),
-            command("sudo", &["update-ca-trust", "extract"]),
-        ],
+        LocalPlatform::Linux => match linux {
+            LinuxTrust::P11Kit => vec![command("sudo", &["trust", "anchor", ca.as_str()])],
+            LinuxTrust::Debian => vec![
+                command("sudo", &["install", "-m", "0644", ca.as_str(), DEBIAN_ANCHOR]),
+                command("sudo", &["update-ca-certificates"]),
+            ],
+            LinuxTrust::RedHat => vec![
+                command("sudo", &["install", "-m", "0644", ca.as_str(), REDHAT_ANCHOR]),
+                command("sudo", &["update-ca-trust", "extract"]),
+            ],
+        },
     }
 }
 
-pub fn untrust_commands(platform: LocalPlatform, ca: &Utf8Path, p11_kit: bool) -> Vec<CommandSpec> {
+pub fn untrust_commands(
+    platform: LocalPlatform,
+    ca: &Utf8Path,
+    linux: LinuxTrust,
+) -> Vec<CommandSpec> {
     match platform {
         LocalPlatform::MacOs => vec![command(
             "sudo",
@@ -132,16 +152,19 @@ pub fn untrust_commands(platform: LocalPlatform, ca: &Utf8Path, p11_kit: bool) -
                 "/Library/Keychains/System.keychain",
             ],
         )],
-        LocalPlatform::Linux if p11_kit => {
-            vec![command("sudo", &["trust", "anchor", "--remove", ca.as_str()])]
-        }
-        LocalPlatform::Linux => vec![
-            command(
-                "sudo",
-                &["rm", "-f", "/etc/pki/ca-trust/source/anchors/wormhole-local-ca.pem"],
-            ),
-            command("sudo", &["update-ca-trust", "extract"]),
-        ],
+        LocalPlatform::Linux => match linux {
+            LinuxTrust::P11Kit => {
+                vec![command("sudo", &["trust", "anchor", "--remove", ca.as_str()])]
+            }
+            LinuxTrust::Debian => vec![
+                command("sudo", &["rm", "-f", DEBIAN_ANCHOR]),
+                command("sudo", &["update-ca-certificates", "--fresh"]),
+            ],
+            LinuxTrust::RedHat => vec![
+                command("sudo", &["rm", "-f", REDHAT_ANCHOR]),
+                command("sudo", &["update-ca-trust", "extract"]),
+            ],
+        },
     }
 }
 
@@ -150,16 +173,23 @@ pub fn untrust_commands(platform: LocalPlatform, ca: &Utf8Path, p11_kit: bool) -
 /// macOS keeps the certificate and the trust setting apart: `find-certificate` succeeds as soon as
 /// the certificate is in the keychain, even when nothing trusts it, so the trust settings are what
 /// must be read back.
-pub fn trust_check_command(platform: LocalPlatform, p11_kit: bool) -> Option<CommandSpec> {
+pub fn trust_check_command(platform: LocalPlatform, linux: LinuxTrust) -> Option<CommandSpec> {
     match platform {
         LocalPlatform::MacOs => Some(command("security", &["dump-trust-settings", "-d"])),
-        LocalPlatform::Linux if p11_kit => Some(command("trust", &["list", "--filter=ca-anchors"])),
-        LocalPlatform::Linux => None,
+        LocalPlatform::Linux => match linux {
+            LinuxTrust::P11Kit => Some(command("trust", &["list", "--filter=ca-anchors"])),
+            LinuxTrust::Debian | LinuxTrust::RedHat => None,
+        },
     }
 }
 
+/// Replaces the hosts file contents in place.
+///
+/// `install` unlinks the destination and creates a new file, which fails outright when the hosts
+/// file is a bind mount — the norm inside containers — with "Device or resource busy". `cp` writes
+/// through the existing inode, so it survives that and leaves anything watching the file intact.
 pub fn hosts_install_command(temporary: &Utf8Path, destination: &Utf8Path) -> CommandSpec {
-    command("sudo", &["install", "-m", "0644", temporary.as_str(), destination.as_str()])
+    command("sudo", &["cp", temporary.as_str(), destination.as_str()])
 }
 
 pub fn prepare_hosts_file(path: &Utf8Path, hostnames: &[String]) -> Result<String, std::io::Error> {
@@ -177,7 +207,7 @@ pub fn hosts_block_state(path: &Utf8Path, tld: &str) -> Result<Vec<String>, std:
 
 pub fn trust_state<R: CommandRunner>(
     platform: LocalPlatform,
-    p11_kit: bool,
+    linux: LinuxTrust,
     ca_exists: bool,
     fallback_anchor_exists: bool,
     runner: &R,
@@ -185,7 +215,7 @@ pub fn trust_state<R: CommandRunner>(
     if !ca_exists {
         return (false, "local CA has not been generated".to_owned());
     }
-    let Some(command) = trust_check_command(platform, p11_kit) else {
+    let Some(command) = trust_check_command(platform, linux) else {
         return if fallback_anchor_exists {
             (true, "installed anchor".to_owned())
         } else {

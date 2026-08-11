@@ -2,7 +2,7 @@
 
 use std::{
     collections::HashMap,
-    net::{Ipv4Addr, SocketAddr},
+    net::{Ipv4Addr, Ipv6Addr, SocketAddr},
     sync::{Arc, OnceLock},
 };
 
@@ -51,7 +51,7 @@ struct ListenerState {
     address: SocketAddr,
     routes: Routes,
     stop: CancellationToken,
-    task: JoinHandle<()>,
+    tasks: Vec<JoinHandle<()>>,
 }
 
 /// Registration removed explicitly when its owning driver stops.
@@ -129,7 +129,9 @@ impl LocalRouter {
         });
         if should_stop && let Some(state) = listeners.remove(&key) {
             state.stop.cancel();
-            let _joined = state.task.await;
+            for task in state.tasks {
+                let _joined = task.await;
+            }
         }
     }
 }
@@ -162,27 +164,33 @@ async fn bind_listener(
     let address = listener.local_addr().map_err(|error| {
         DriverError::Transport(format!("local listener address failed: {error}"))
     })?;
+    // `*.localhost` resolves to ::1 before 127.0.0.1 on macOS. Serving only IPv4 leaves clients to
+    // fall back, which plain HTTP survives but a TLS handshake does not, so bind both loopbacks on
+    // the same port. IPv6 is best effort because a host may have it disabled entirely.
+    let listeners = std::iter::once(listener)
+        .chain(TcpListener::bind((Ipv6Addr::LOCALHOST, address.port())).await.ok())
+        .collect::<Vec<_>>();
     let routes = Arc::new(RwLock::new(HashMap::new()));
     let stop = CancellationToken::new();
-    let task = match key.protocol {
-        ListenerProtocol::Http => {
-            tokio::spawn(accept_loop(listener, Arc::clone(&routes), stop.child_token()))
-        }
-        ListenerProtocol::Https => {
-            let resolver = resolver.ok_or_else(|| {
-                DriverError::Protocol(
-                    "local HTTPS listener requires a certificate resolver".to_owned(),
-                )
-            })?;
-            tokio::spawn(accept_tls_loop(
+    let acceptor = match key.protocol {
+        ListenerProtocol::Http => None,
+        ListenerProtocol::Https => Some(tls_acceptor(resolver.ok_or_else(|| {
+            DriverError::Protocol("local HTTPS listener requires a certificate resolver".to_owned())
+        })?)),
+    };
+    let tasks = listeners
+        .into_iter()
+        .map(|listener| match acceptor.clone() {
+            None => tokio::spawn(accept_loop(listener, Arc::clone(&routes), stop.child_token())),
+            Some(acceptor) => tokio::spawn(accept_tls_loop(
                 listener,
                 Arc::clone(&routes),
                 stop.child_token(),
-                tls_acceptor(resolver),
-            ))
-        }
-    };
-    Ok(ListenerState { address, routes, stop, task })
+                acceptor,
+            )),
+        })
+        .collect();
+    Ok(ListenerState { address, routes, stop, tasks })
 }
 
 fn bind_error(key: ListenerKey, error: std::io::Error) -> DriverError {

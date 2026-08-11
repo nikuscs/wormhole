@@ -9,10 +9,12 @@ use wormhole_core::{
     config::global_config_path,
     local_ca::LocalCertificateAuthority,
     local_system::{
-        CommandRunner, CommandSpec, LocalPlatform, SystemCommandRunner, elevation_commands,
-        elevation_enabled, forwarder_definition, hosts_block_state, hosts_install_command,
-        prepare_hosts_file, remove_elevation_marker, trust_commands, trust_state,
-        unelevation_commands, untrust_commands, verify_executable_source, write_elevation_marker,
+        CommandRunner, CommandSpec, LinuxTrust, LocalPlatform, SystemCommandRunner,
+        elevation_activate_commands, elevation_enabled, elevation_install_commands,
+        forwarder_definition, hosts_block_state, hosts_install_command, prepare_hosts_file,
+        remove_elevation_marker, resolve_executable_source, root_forwarder_path, trust_commands,
+        trust_state, unelevation_commands, untrust_commands, verify_forwarder_destination,
+        write_elevation_marker,
     },
 };
 
@@ -27,7 +29,7 @@ use crate::{
 pub struct LocalActionResult {
     action: String,
     changed: bool,
-    commands: Vec<String>,
+    pub commands: Vec<String>,
 }
 
 impl HumanRender for LocalActionResult {
@@ -61,9 +63,9 @@ pub async fn doctor_checks(
     };
     let (trusted, trust_detail) = trust_state(
         LocalPlatform::current(),
-        p11_kit_available(),
+        linux_trust(),
         directory.join("local-ca.pem").is_file(),
-        std::path::Path::new("/etc/pki/ca-trust/source/anchors/wormhole-local-ca.pem").is_file(),
+        std::path::Path::new(linux_anchor()).is_file(),
         &SystemCommandRunner,
     );
     let hosts = hosts_check(config);
@@ -89,9 +91,9 @@ fn trust(cli: &Cli, install: bool, yes: bool) -> Result<(), CliError> {
         directory.join("local-ca.pem")
     };
     let commands = if install {
-        trust_commands(LocalPlatform::current(), &ca_path, p11_kit_available())
+        trust_commands(LocalPlatform::current(), &ca_path, linux_trust())
     } else {
-        untrust_commands(LocalPlatform::current(), &ca_path, p11_kit_available())
+        untrust_commands(LocalPlatform::current(), &ca_path, linux_trust())
     };
     let action = if install { "local CA trust" } else { "local CA untrust" };
     let result = apply_commands(action, commands, yes, &SystemCommandRunner)?;
@@ -109,9 +111,9 @@ fn trust(cli: &Cli, install: bool, yes: bool) -> Result<(), CliError> {
 fn verify_trusted() -> Result<(), CliError> {
     let (trusted, detail) = trust_state(
         LocalPlatform::current(),
-        p11_kit_available(),
+        linux_trust(),
         true,
-        std::path::Path::new("/etc/pki/ca-trust/source/anchors/wormhole-local-ca.pem").is_file(),
+        std::path::Path::new(linux_anchor()).is_file(),
         &SystemCommandRunner,
     );
     if trusted {
@@ -158,8 +160,11 @@ fn elevate(cli: &Cli, yes: bool) -> Result<(), CliError> {
     let config = utility_commands::load(cli.config.as_ref())?;
     let directory = config_directory(super::config_path(cli))?;
     let executable = std::env::current_exe()?;
-    let executable =
-        verify_executable_source(&utf8_path(&executable)?).map_err(CliError::Invalid)?;
+    let (executable, source_warning) =
+        resolve_executable_source(&utf8_path(&executable)?).map_err(CliError::Invalid)?;
+    if let Some(warning) = source_warning {
+        output::preview_warning(&warning);
+    }
     let definition = forwarder_definition(
         LocalPlatform::current(),
         config.defaults.local_http_port,
@@ -169,12 +174,21 @@ fn elevate(cli: &Cli, yes: bool) -> Result<(), CliError> {
     );
     let temporary = temporary_file(&directory, &definition)?;
     let path = utf8_path(temporary.path())?;
-    let result = apply_commands(
+    let mut result = apply_commands(
         "local privileged ports",
-        elevation_commands(LocalPlatform::current(), &executable, &path),
+        elevation_install_commands(LocalPlatform::current(), &executable),
         yes,
         &SystemCommandRunner,
     )?;
+    verify_forwarder_destination(&root_forwarder_path(LocalPlatform::current()))
+        .map_err(CliError::Invalid)?;
+    let activation = apply_commands(
+        "local privileged ports",
+        elevation_activate_commands(LocalPlatform::current(), &path),
+        true,
+        &SystemCommandRunner,
+    )?;
+    result.commands.extend(activation.commands);
     write_elevation_marker(&directory)?;
     output::emit(super::format(cli.json), &result);
     Ok(())
@@ -234,21 +248,30 @@ fn confirm(action: &str, yes: bool) -> Result<(), CliError> {
     }
 }
 
-fn validate_hosts(hostnames: &[String], tld: &str) -> Result<(), CliError> {
-    if tld == "localhost" {
-        return Err(CliError::Invalid(".localhost needs no hosts entry".to_owned()));
-    }
-    let suffix = format!(".{tld}");
-    if hostnames.iter().any(|hostname| {
-        hostname != tld
-            && (!hostname.ends_with(&suffix)
-                || hostname.chars().any(|character| {
-                    !(character.is_ascii_lowercase()
-                        || character.is_ascii_digit()
-                        || matches!(character, '-' | '.'))
-                }))
-    }) {
-        return Err(CliError::Invalid(format!("hosts must be lowercase names beneath .{tld}")));
+/// Validates each hostname on its own suffix rather than the configured one.
+///
+/// Judging by configuration rejected `hosts sync app.test` with ".localhost needs no hosts entry"
+/// whenever `local_tld` was still the default, which describes a hostname the user never typed.
+fn validate_hosts(hostnames: &[String], _tld: &str) -> Result<(), CliError> {
+    for hostname in hostnames {
+        let suffix = hostname.rsplit('.').next().unwrap_or_default();
+        if suffix == "localhost" {
+            return Err(CliError::Invalid(format!(
+                "{hostname} resolves without a hosts entry; .localhost needs no sync"
+            )));
+        }
+        if !hostname.contains('.') {
+            return Err(CliError::Invalid(format!(
+                "{hostname} must be a dotted name such as app.test"
+            )));
+        }
+        if hostname.chars().any(|character| {
+            !(character.is_ascii_lowercase()
+                || character.is_ascii_digit()
+                || matches!(character, '-' | '.'))
+        }) {
+            return Err(CliError::Invalid(format!("{hostname} must be a lowercase DNS name")));
+        }
     }
     Ok(())
 }
@@ -287,8 +310,28 @@ fn doctor_check(name: &str, healthy: bool, detail: String) -> wormhole_core::mod
     wormhole_core::model::DoctorCheck { name: name.to_owned(), healthy, detail }
 }
 
-fn p11_kit_available() -> bool {
-    std::path::Path::new("/usr/bin/trust").is_file() || std::path::Path::new("/bin/trust").is_file()
+/// Detects how this machine stores additional certificate authorities.
+///
+/// p11-kit is preferred when present because it serves either family. Otherwise the Debian layout
+/// is chosen only when its directory exists, so a Red Hat host is never handed Debian commands.
+fn linux_trust() -> LinuxTrust {
+    if std::path::Path::new("/usr/bin/trust").is_file()
+        || std::path::Path::new("/bin/trust").is_file()
+    {
+        return LinuxTrust::P11Kit;
+    }
+    if std::path::Path::new("/usr/local/share/ca-certificates").is_dir() {
+        return LinuxTrust::Debian;
+    }
+    LinuxTrust::RedHat
+}
+
+/// Anchor path for the detected layout, used as the fallback trust signal.
+fn linux_anchor() -> &'static str {
+    match linux_trust() {
+        LinuxTrust::Debian => wormhole_core::local_system::DEBIAN_ANCHOR,
+        LinuxTrust::P11Kit | LinuxTrust::RedHat => wormhole_core::local_system::REDHAT_ANCHOR,
+    }
 }
 
 fn config_directory(config_path: Option<&Utf8Path>) -> Result<Utf8PathBuf, CliError> {
@@ -321,10 +364,26 @@ async fn privileged_forward(
     user_id: u32,
     group_id: u32,
 ) -> Result<(), CliError> {
-    let clear = TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 80)).await?;
-    let tls = TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 443)).await?;
+    // Both loopbacks, because `*.localhost` resolves to ::1 first and a TLS client that reaches an
+    // unserved address fails outright rather than falling back. IPv6 is best effort so a host with
+    // it disabled still forwards. Every bind happens before privileges are dropped.
+    let mut listeners = Vec::new();
+    for (port, target) in [(80, clear_target), (443, tls_target)] {
+        listeners.push((TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, port)).await?, target));
+        if let Ok(listener) = TcpListener::bind((std::net::Ipv6Addr::LOCALHOST, port)).await {
+            listeners.push((listener, target));
+        }
+    }
     drop_forwarder_privileges(user_id, group_id)?;
-    tokio::try_join!(serve_listener(clear, clear_target), serve_listener(tls, tls_target))?;
+    // Collected eagerly: a lazy iterator would spawn each listener only as it is awaited, leaving
+    // every listener after the first bound but never accepted.
+    let served = listeners
+        .into_iter()
+        .map(|(listener, target)| tokio::spawn(serve_listener(listener, target)))
+        .collect::<Vec<_>>();
+    for task in served {
+        task.await.map_err(|error| CliError::Invalid(error.to_string()))??;
+    }
     Ok(())
 }
 

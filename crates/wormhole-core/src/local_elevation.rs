@@ -13,16 +13,17 @@ pub const ELEVATION_MARKER: &str = "local-elevation.toml";
 const MACOS_FORWARDER: &str = "/usr/local/libexec/wormhole-local-forwarder";
 const LINUX_FORWARDER: &str = "/usr/local/lib/wormhole/wormhole-local-forwarder";
 
-pub fn elevation_commands(
-    platform: LocalPlatform,
-    source: &Utf8Path,
-    definition: &Utf8Path,
-) -> Vec<CommandSpec> {
+/// Commands that place the root-owned forwarder, without activating anything.
+///
+/// Kept separate from [`elevation_activate_commands`] so the destination can be verified before a
+/// root service is created against it. Activating first would leave a running root service behind
+/// when verification fails.
+pub fn elevation_install_commands(platform: LocalPlatform, source: &Utf8Path) -> Vec<CommandSpec> {
     let (directory, owner, group) = match platform {
         LocalPlatform::MacOs => ("/usr/local/libexec", "root", "wheel"),
         LocalPlatform::Linux => ("/usr/local/lib/wormhole", "root", "root"),
     };
-    let mut commands = vec![
+    vec![
         command("sudo", &["install", "-d", "-o", owner, "-g", group, "-m", "0755", directory]),
         command(
             "sudo",
@@ -38,7 +39,15 @@ pub fn elevation_commands(
                 root_forwarder_path(platform).as_str(),
             ],
         ),
-    ];
+    ]
+}
+
+/// Commands that register and start the root service, run only after the destination is verified.
+pub fn elevation_activate_commands(
+    platform: LocalPlatform,
+    definition: &Utf8Path,
+) -> Vec<CommandSpec> {
+    let mut commands = Vec::new();
     match platform {
         LocalPlatform::MacOs => commands.extend([
             command(
@@ -147,7 +156,14 @@ pub fn root_forwarder_path(platform: LocalPlatform) -> Utf8PathBuf {
     })
 }
 
-pub fn verify_executable_source(path: &Utf8Path) -> Result<Utf8PathBuf, String> {
+/// Resolves the executable to copy, and reports whether its location is user-writable.
+///
+/// The source only decides what is copied once, under a `sudo` the user just authorized, which is
+/// the same trust assumption as any `sudo install`. Refusing here blocked every Homebrew install,
+/// whose prefix is group-writable by `admin` — a group whose members can already become root, so
+/// the refusal cost real usability and bought nothing. What matters is the destination the root
+/// service executes, which [`verify_forwarder_destination`] checks after the copy.
+pub fn resolve_executable_source(path: &Utf8Path) -> Result<(Utf8PathBuf, Option<String>), String> {
     let canonical = fs::canonicalize(path)
         .map_err(|error| format!("cannot resolve elevation executable {path}: {error}"))?;
     let canonical = Utf8PathBuf::from_path_buf(canonical)
@@ -157,18 +173,43 @@ pub fn verify_executable_source(path: &Utf8Path) -> Result<Utf8PathBuf, String> 
     if !metadata.is_file() {
         return Err(format!("elevation executable is not a regular file: {canonical}"));
     }
-    for component in canonical.ancestors() {
+    let warning = writable_component(&canonical)?.map(|component| {
+        format!(
+            "{component} is writable without root; elevation copies the file as it is right now"
+        )
+    });
+    Ok((canonical, warning))
+}
+
+/// Rejects a forwarder the root service would execute from a path others can rewrite.
+///
+/// This is the check the threat model depends on: a root service must never execute a file that a
+/// non-root user can replace later.
+pub fn verify_forwarder_destination(path: &Utf8Path) -> Result<(), String> {
+    let metadata = fs::metadata(path)
+        .map_err(|error| format!("cannot inspect installed forwarder {path}: {error}"))?;
+    if !metadata.is_file() {
+        return Err(format!("installed forwarder is not a regular file: {path}"));
+    }
+    writable_component(path)?.map_or(Ok(()), |component| {
+        Err(format!(
+            "refusing elevation: {component} is writable without root, so the root service could be replaced"
+        ))
+    })
+}
+
+/// First component of `path`, including itself, that a non-root user can write.
+fn writable_component(path: &Utf8Path) -> Result<Option<Utf8PathBuf>, String> {
+    for component in path.ancestors() {
         let metadata = fs::metadata(component)
             .map_err(|error| format!("cannot inspect {component}: {error}"))?;
         let mode = metadata.permissions().mode();
-        let non_root_owner_write = metadata.uid() != 0 && mode & 0o200 != 0;
-        if non_root_owner_write || mode & 0o022 != 0 {
-            return Err(format!(
-                "refusing elevation: {component} is writable by a non-root user; install Wormhole beneath a root-owned, non-writable directory first"
-            ));
+        let owner_writes_without_root = metadata.uid() != 0 && mode & 0o200 != 0;
+        if owner_writes_without_root || mode & 0o022 != 0 {
+            return Ok(Some(component.to_owned()));
         }
     }
-    Ok(canonical)
+    Ok(None)
 }
 
 fn command(program: &str, args: &[&str]) -> CommandSpec {

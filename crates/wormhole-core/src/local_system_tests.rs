@@ -3,11 +3,12 @@ use std::sync::Mutex;
 use camino::Utf8Path;
 
 use super::{
-    CommandOutput, CommandRunner, ELEVATION_MARKER, HOSTS_BEGIN, HOSTS_END, LocalPlatform,
-    elevation_commands, elevation_enabled, forwarder_definition, hosts_install_command,
-    managed_hosts, prepare_hosts_file, remove_elevation_marker, render_hosts, root_forwarder_path,
-    trust_commands, trust_state, unelevation_commands, untrust_commands, verify_executable_source,
-    write_elevation_marker,
+    CommandOutput, CommandRunner, ELEVATION_MARKER, HOSTS_BEGIN, HOSTS_END, LinuxTrust,
+    LocalPlatform, elevation_activate_commands, elevation_enabled, elevation_install_commands,
+    forwarder_definition, hosts_install_command, managed_hosts, prepare_hosts_file,
+    remove_elevation_marker, render_hosts, resolve_executable_source, root_forwarder_path,
+    trust_commands, trust_state, unelevation_commands, untrust_commands,
+    verify_forwarder_destination, write_elevation_marker,
 };
 
 #[derive(Default)]
@@ -57,9 +58,10 @@ fn privileged_plans_are_explicit_and_execute_only_through_runner() {
     let source = Utf8Path::new("/opt/wormhole source");
     let temporary = Utf8Path::new("/tmp/wormhole service");
     let runner = FakeRunner::default();
-    let mut commands = trust_commands(LocalPlatform::MacOs, ca, true);
-    commands.extend(untrust_commands(LocalPlatform::Linux, ca, true));
-    commands.extend(elevation_commands(LocalPlatform::Linux, source, temporary));
+    let mut commands = trust_commands(LocalPlatform::MacOs, ca, LinuxTrust::P11Kit);
+    commands.extend(untrust_commands(LocalPlatform::Linux, ca, LinuxTrust::P11Kit));
+    commands.extend(elevation_install_commands(LocalPlatform::Linux, source));
+    commands.extend(elevation_activate_commands(LocalPlatform::Linux, temporary));
     commands.extend(unelevation_commands(LocalPlatform::MacOs));
     commands.push(hosts_install_command(temporary, Utf8Path::new("/etc/hosts")));
 
@@ -84,12 +86,14 @@ fn privileged_plans_are_explicit_and_execute_only_through_runner() {
 #[test]
 fn trust_status_uses_injected_runner_without_system_mutation() {
     let runner = FakeRunner::default();
-    let (trusted, detail) = trust_state(LocalPlatform::Linux, true, true, false, &runner);
+    let (trusted, detail) =
+        trust_state(LocalPlatform::Linux, LinuxTrust::P11Kit, true, false, &runner);
     assert!(trusted);
     assert_eq!(detail, "trusted");
     assert_eq!(runner.commands.lock().expect("commands").len(), 1);
 
-    let (trusted, detail) = trust_state(LocalPlatform::Linux, false, true, true, &runner);
+    let (trusted, detail) =
+        trust_state(LocalPlatform::Linux, LinuxTrust::RedHat, true, true, &runner);
     assert!(trusted);
     assert_eq!(detail, "installed anchor");
 }
@@ -99,7 +103,8 @@ fn trust_status_uses_injected_runner_without_system_mutation() {
 #[test]
 fn a_present_but_untrusted_certificate_is_not_reported_as_trusted() {
     let runner = SilentRunner;
-    let (trusted, detail) = trust_state(LocalPlatform::MacOs, false, true, false, &runner);
+    let (trusted, detail) =
+        trust_state(LocalPlatform::MacOs, LinuxTrust::P11Kit, true, false, &runner);
     assert!(!trusted, "empty trust settings must not read as trusted");
     assert!(detail.contains("not trusted"), "{detail}");
 }
@@ -107,11 +112,12 @@ fn a_present_but_untrusted_certificate_is_not_reported_as_trusted() {
 #[test]
 fn privileged_commands_keep_the_terminal_for_their_prompts() {
     let ca = camino::Utf8Path::new("/tmp/local-ca.pem");
-    for command in trust_commands(LocalPlatform::MacOs, ca, false) {
+    for command in trust_commands(LocalPlatform::MacOs, ca, LinuxTrust::P11Kit) {
         assert_eq!(command.program, "sudo");
         assert!(command.interactive, "sudo must be able to prompt: {}", command.display());
     }
-    let check = super::trust_check_command(LocalPlatform::MacOs, false).expect("check command");
+    let check = super::trust_check_command(LocalPlatform::MacOs, LinuxTrust::P11Kit)
+        .expect("check command");
     assert!(!check.interactive, "read-only probes stay captured so output can be inspected");
 }
 
@@ -125,15 +131,20 @@ impl CommandRunner for SilentRunner {
 }
 
 #[test]
-fn linux_trust_falls_back_to_update_ca_trust() {
+fn each_linux_family_gets_its_own_trust_commands() {
     let ca = Utf8Path::new("/tmp/local-ca.pem");
-    let install = trust_commands(LocalPlatform::Linux, ca, false);
-    let remove = untrust_commands(LocalPlatform::Linux, ca, false);
+    let redhat = trust_commands(LocalPlatform::Linux, ca, LinuxTrust::RedHat);
+    assert!(redhat[0].display().contains("/etc/pki/ca-trust/source/anchors"));
+    assert_eq!(redhat[1].display(), "sudo update-ca-trust extract");
 
-    assert!(install[0].display().contains("/etc/pki/ca-trust/source/anchors"));
-    assert_eq!(install[1].display(), "sudo update-ca-trust extract");
-    assert!(remove[0].display().contains("rm -f"));
-    assert_eq!(remove[1].display(), "sudo update-ca-trust extract");
+    // Debian has neither that directory nor that command, so assuming Red Hat fails outright.
+    let debian = trust_commands(LocalPlatform::Linux, ca, LinuxTrust::Debian);
+    assert!(debian[0].display().contains("/usr/local/share/ca-certificates"));
+    assert_eq!(debian[1].display(), "sudo update-ca-certificates");
+
+    let removed = untrust_commands(LocalPlatform::Linux, ca, LinuxTrust::Debian);
+    assert!(removed[0].display().contains("rm -f /usr/local/share/ca-certificates"));
+    assert_eq!(removed[1].display(), "sudo update-ca-certificates --fresh");
 }
 
 #[test]
@@ -162,14 +173,50 @@ fn forwarder_definitions_and_marker_are_deterministic() {
     assert!(!elevation_enabled(root));
 }
 
+/// Homebrew installs into a prefix its own user can write, so refusing there blocked the primary
+/// install path while the root service still ran from a root-owned copy.
 #[test]
-fn elevation_rejects_user_writable_executable_ancestry() {
+fn a_user_writable_source_warns_instead_of_refusing() {
     let directory = tempfile::tempdir().expect("directory");
     let executable = Utf8Path::from_path(directory.path()).expect("UTF-8 path").join("wormhole");
     std::fs::write(&executable, "fixture").expect("executable");
 
-    let error = verify_executable_source(&executable).expect_err("writable source must fail");
+    let (resolved, warning) =
+        resolve_executable_source(&executable).expect("a writable source is allowed");
 
-    assert!(error.contains("refusing elevation"));
-    assert!(error.contains("writable by a non-root user"));
+    assert!(resolved.ends_with("wormhole"));
+    let warning = warning.expect("a writable source must warn");
+    assert!(warning.contains("writable without root"), "{warning}");
+    assert!(warning.contains("as it is right now"), "{warning}");
+}
+
+/// The destination is what the root service executes, so it is the one that must be locked down.
+#[test]
+fn elevation_rejects_a_user_writable_forwarder_destination() {
+    let directory = tempfile::tempdir().expect("directory");
+    let installed = Utf8Path::from_path(directory.path()).expect("UTF-8 path").join("forwarder");
+    std::fs::write(&installed, "fixture").expect("forwarder");
+
+    let error =
+        verify_forwarder_destination(&installed).expect_err("a writable destination must fail");
+
+    assert!(error.contains("refusing elevation"), "{error}");
+    assert!(error.contains("could be replaced"), "{error}");
+}
+
+/// The failure paths alone would not catch a check that rejects everything, including a correctly
+/// installed forwarder. `/bin/echo` stands in for one: root-owned and writable by nobody else.
+#[test]
+fn a_root_owned_destination_is_accepted() {
+    let root_owned = Utf8Path::new("/bin/echo");
+    assert!(root_owned.is_file(), "fixture path must exist on this platform");
+
+    verify_forwarder_destination(root_owned).expect("a root-owned forwarder must be accepted");
+}
+
+#[test]
+fn a_missing_forwarder_destination_is_rejected() {
+    let directory = tempfile::tempdir().expect("directory");
+    let missing = Utf8Path::from_path(directory.path()).expect("UTF-8 path").join("absent");
+    assert!(verify_forwarder_destination(&missing).is_err());
 }

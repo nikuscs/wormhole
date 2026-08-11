@@ -15,6 +15,10 @@ web UI; use the CLI, JSON output, and local Unix-socket APIs.
 - At the start of each task, read `.agents/scratchpad.md` for pending cross-worktree work, integration
   constraints, and follow-ups. Add concise pending items when discovered and remove them when resolved;
   the scratchpad records coordination context and does not authorize otherwise unrequested work.
+- A user-facing change is not done until its documentation is. Update `README.md` and
+  `skills/wormhole-cli/SKILL.md` in the same change that adds or alters a command, flag, config key,
+  or default, and bump the skill's `metadata.version`. The skill is what other agents read, so a
+  feature missing from it does not exist to them.
 - Commit or push only when requested. Never create or open a pull request without explicit permission.
 - An unqualified release request means the documented local-first flow: `scripts/release-local.sh build`
   followed by `publish` of those exact artifacts. Dispatch `.github/workflows/release.yml` only when

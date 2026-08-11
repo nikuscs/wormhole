@@ -139,10 +139,28 @@ wormhole http 3000 --endpoint local --tld test
 wormhole http 3000 --endpoint wormhole --endpoint tailscale --endpoint cloudflare
 ```
 
-Local endpoints default to `*.localhost`, which needs no DNS or hosts entry. For a custom suffix,
-`.test` is recommended (RFC 2606); Wormhole prints the exact `wormhole local hosts sync <hostname>`
-command when its managed `/etc/hosts` block is missing the name, but never edits the hosts file
-automatically. `.local` conflicts with mDNS/Bonjour (RFC 6762) and emits a warning if selected.
+Local endpoints default to `*.localhost`, which browsers resolve to loopback with no DNS or hosts
+entry, and treat as a secure context so service workers and `crypto.subtle` work over plain HTTP.
+
+On Linux this applies to browsers only: glibc resolves `localhost` but not `app.localhost`, so
+`curl` and other command-line clients need a hosts entry even on the default suffix.
+
+`--tld` takes any suffix, including a multi-segment domain:
+
+```console
+wormhole http 3000 --endpoint local --tld test
+wormhole http 3000 --endpoint local --tld internal
+wormhole http 3000 --endpoint local --tld dev.example.com
+```
+
+`.test` (RFC 2606) and `.internal` (ICANN-reserved) are recommended because neither can ever be
+delegated. A domain you own is safer still. Avoid inventing an undelegated suffix, which starts
+shadowing a real domain if it is ever registered. `.local` conflicts with mDNS/Bonjour (RFC 6762)
+and emits a warning if selected.
+
+Any suffix other than `.localhost` needs one `/etc/hosts` entry per hostname, because hosts files
+have no wildcards. Wormhole prints the exact `wormhole local hosts sync <hostname>` command when its
+managed block is missing the name, and never edits the hosts file on its own.
 
 Tailscale uses the local `tailscaled` login. Cloudflare quick tunnels need no login; named tunnels
 use `cloudflared tunnel login`.
