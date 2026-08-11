@@ -7,6 +7,8 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-08-11
+
 ### Added
 
 - A `local` driver, selected with `--endpoint local`, serves HTTP services on local hostnames through
@@ -97,7 +99,8 @@ brew install nikuscs/tap/wormhole
 - Strict Ed25519 identities, bounded protocol frames and mux queues, per-key quotas, hardened TLS,
   Unix-socket administration, secure state permissions, and provider ownership checks.
 
-[Unreleased]: https://github.com/nikuscs/wormhole/compare/v0.1.2...HEAD
+[Unreleased]: https://github.com/nikuscs/wormhole/compare/v0.2.0...HEAD
 [0.1.0]: https://github.com/nikuscs/wormhole/releases/tag/v0.1.0
 [0.1.1]: https://github.com/nikuscs/wormhole/releases/tag/v0.1.1
 [0.1.2]: https://github.com/nikuscs/wormhole/releases/tag/v0.1.2
+[0.2.0]: https://github.com/nikuscs/wormhole/releases/tag/v0.2.0
