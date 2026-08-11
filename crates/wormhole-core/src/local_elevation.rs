@@ -173,6 +173,7 @@ pub fn verify_executable_source(path: &Utf8Path) -> Result<Utf8PathBuf, String> 
 
 fn command(program: &str, args: &[&str]) -> CommandSpec {
     CommandSpec {
+        interactive: program == "sudo",
         program: program.to_owned(),
         args: args.iter().map(|argument| (*argument).to_owned()).collect(),
     }

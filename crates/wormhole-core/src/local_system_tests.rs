@@ -86,12 +86,42 @@ fn trust_status_uses_injected_runner_without_system_mutation() {
     let runner = FakeRunner::default();
     let (trusted, detail) = trust_state(LocalPlatform::Linux, true, true, false, &runner);
     assert!(trusted);
-    assert_eq!(detail, "installed");
+    assert_eq!(detail, "trusted");
     assert_eq!(runner.commands.lock().expect("commands").len(), 1);
 
     let (trusted, detail) = trust_state(LocalPlatform::Linux, false, true, true, &runner);
     assert!(trusted);
     assert_eq!(detail, "installed anchor");
+}
+
+/// A certificate can sit in the keychain while nothing trusts it, which is how macOS reported
+/// success for an authority that browsers still rejected.
+#[test]
+fn a_present_but_untrusted_certificate_is_not_reported_as_trusted() {
+    let runner = SilentRunner;
+    let (trusted, detail) = trust_state(LocalPlatform::MacOs, false, true, false, &runner);
+    assert!(!trusted, "empty trust settings must not read as trusted");
+    assert!(detail.contains("not trusted"), "{detail}");
+}
+
+#[test]
+fn privileged_commands_keep_the_terminal_for_their_prompts() {
+    let ca = camino::Utf8Path::new("/tmp/local-ca.pem");
+    for command in trust_commands(LocalPlatform::MacOs, ca, false) {
+        assert_eq!(command.program, "sudo");
+        assert!(command.interactive, "sudo must be able to prompt: {}", command.display());
+    }
+    let check = super::trust_check_command(LocalPlatform::MacOs, false).expect("check command");
+    assert!(!check.interactive, "read-only probes stay captured so output can be inspected");
+}
+
+/// Stands in for a system whose trust settings are empty.
+struct SilentRunner;
+
+impl CommandRunner for SilentRunner {
+    fn run(&self, _command: &super::CommandSpec) -> Result<CommandOutput, std::io::Error> {
+        Ok(CommandOutput { success: false, stdout: String::new(), stderr: String::new() })
+    }
 }
 
 #[test]

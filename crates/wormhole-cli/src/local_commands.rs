@@ -95,8 +95,31 @@ fn trust(cli: &Cli, install: bool, yes: bool) -> Result<(), CliError> {
     };
     let action = if install { "local CA trust" } else { "local CA untrust" };
     let result = apply_commands(action, commands, yes, &SystemCommandRunner)?;
+    if install {
+        verify_trusted()?;
+    }
     output::emit(super::format(cli.json), &result);
     Ok(())
+}
+
+/// Confirms the authority is genuinely trusted after installing it.
+///
+/// `security add-trusted-cert` exits zero even when it could not record the trust setting, so its
+/// exit status alone does not mean local HTTPS will be accepted.
+fn verify_trusted() -> Result<(), CliError> {
+    let (trusted, detail) = trust_state(
+        LocalPlatform::current(),
+        p11_kit_available(),
+        true,
+        std::path::Path::new("/etc/pki/ca-trust/source/anchors/wormhole-local-ca.pem").is_file(),
+        &SystemCommandRunner,
+    );
+    if trusted {
+        return Ok(());
+    }
+    Err(CliError::Invalid(format!(
+        "the certificate was installed but is not trusted ({detail}); local HTTPS will still be rejected"
+    )))
 }
 
 fn hosts(cli: &Cli, command: &LocalHostsCommand) -> Result<(), CliError> {

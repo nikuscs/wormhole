@@ -34,6 +34,12 @@ impl LocalPlatform {
 pub struct CommandSpec {
     pub program: String,
     pub args: Vec<String>,
+    /// Whether the command must reach the terminal to prompt.
+    ///
+    /// `sudo` asks for a password and macOS asks to confirm a new trust root. Both prompts are
+    /// only presented when the child keeps the terminal, and `security add-trusted-cert` still
+    /// exits zero when it cannot ask, silently skipping the trust setting.
+    pub interactive: bool,
 }
 
 impl CommandSpec {
@@ -63,6 +69,14 @@ pub struct SystemCommandRunner;
 
 impl CommandRunner for SystemCommandRunner {
     fn run(&self, command: &CommandSpec) -> Result<CommandOutput, std::io::Error> {
+        if command.interactive {
+            let status = Command::new(&command.program).args(&command.args).status()?;
+            return Ok(CommandOutput {
+                success: status.success(),
+                stdout: String::new(),
+                stderr: String::new(),
+            });
+        }
         let output = Command::new(&command.program).args(&command.args).output()?;
         Ok(CommandOutput {
             success: output.status.success(),
@@ -131,12 +145,14 @@ pub fn untrust_commands(platform: LocalPlatform, ca: &Utf8Path, p11_kit: bool) -
     }
 }
 
+/// Command whose output proves the authority is trusted, not merely present.
+///
+/// macOS keeps the certificate and the trust setting apart: `find-certificate` succeeds as soon as
+/// the certificate is in the keychain, even when nothing trusts it, so the trust settings are what
+/// must be read back.
 pub fn trust_check_command(platform: LocalPlatform, p11_kit: bool) -> Option<CommandSpec> {
     match platform {
-        LocalPlatform::MacOs => Some(command(
-            "security",
-            &["find-certificate", "-c", "Wormhole Local CA", "/Library/Keychains/System.keychain"],
-        )),
+        LocalPlatform::MacOs => Some(command("security", &["dump-trust-settings", "-d"])),
         LocalPlatform::Linux if p11_kit => Some(command("trust", &["list", "--filter=ca-anchors"])),
         LocalPlatform::Linux => None,
     }
@@ -176,15 +192,11 @@ pub fn trust_state<R: CommandRunner>(
             (false, "not installed".to_owned())
         };
     };
+    // `security dump-trust-settings` exits non-zero when no settings exist at all, so the listing
+    // itself decides the answer rather than the exit status.
     match runner.run(&command) {
-        Ok(output)
-            if output.success
-                && (platform == LocalPlatform::MacOs
-                    || output.stdout.contains("Wormhole Local CA")) =>
-        {
-            (true, "installed".to_owned())
-        }
-        Ok(output) => (false, output.stderr),
+        Ok(output) if output.stdout.contains("Wormhole Local CA") => (true, "trusted".to_owned()),
+        Ok(_) => (false, "certificate is not trusted; run `wormhole local trust`".to_owned()),
         Err(error) => (false, error.to_string()),
     }
 }
@@ -240,6 +252,7 @@ fn ensure_final_newline(value: &str) -> String {
 
 fn command(program: &str, args: &[&str]) -> CommandSpec {
     CommandSpec {
+        interactive: program == "sudo",
         program: program.to_owned(),
         args: args.iter().map(|argument| (*argument).to_owned()).collect(),
     }

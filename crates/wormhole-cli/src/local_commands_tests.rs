@@ -20,8 +20,16 @@ impl CommandRunner for FakeRunner {
 fn confirmed_actions_run_in_order_and_report_both_output_contracts() {
     let runner = FakeRunner::default();
     let commands = vec![
-        CommandSpec { program: "first".to_owned(), args: vec!["one".to_owned()] },
-        CommandSpec { program: "second".to_owned(), args: vec!["two".to_owned()] },
+        CommandSpec {
+            program: "first".to_owned(),
+            args: vec!["one".to_owned()],
+            interactive: false,
+        },
+        CommandSpec {
+            program: "second".to_owned(),
+            args: vec!["two".to_owned()],
+            interactive: false,
+        },
     ];
 
     let result = apply_commands("fixture", commands, true, &runner).expect("action");
