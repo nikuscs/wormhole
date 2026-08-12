@@ -173,14 +173,13 @@ notarytool_args() {
 }
 
 find_signing_identity() {
-    local keychain_args=()
     if [[ -n "${WORMHOLE_CODESIGN_IDENTITY:-}" ]]; then
         SIGNING_IDENTITY=$WORMHOLE_CODESIGN_IDENTITY
+    elif [[ -n "${WORMHOLE_SIGNING_KEYCHAIN:-}" ]]; then
+        SIGNING_IDENTITY=$(security find-identity -v -p codesigning "$WORMHOLE_SIGNING_KEYCHAIN" \
+            | sed -n 's/.*"\(Developer ID Application:[^"]*\)".*/\1/p' | head -1)
     else
-        if [[ -n "${WORMHOLE_SIGNING_KEYCHAIN:-}" ]]; then
-            keychain_args=("$WORMHOLE_SIGNING_KEYCHAIN")
-        fi
-        SIGNING_IDENTITY=$(security find-identity -v -p codesigning "${keychain_args[@]}" \
+        SIGNING_IDENTITY=$(security find-identity -v -p codesigning \
             | sed -n 's/.*"\(Developer ID Application:[^"]*\)".*/\1/p' | head -1)
     fi
     [[ -n "$SIGNING_IDENTITY" ]] || fail "Developer ID Application certificate not found"
