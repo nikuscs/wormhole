@@ -424,16 +424,7 @@ impl TailscaleDriver {
 }
 
 async fn snapshot_config(api: &Arc<dyn TailscaleApi>) -> Result<(), DriverError> {
-    let path =
-        std::env::temp_dir().join(format!("wormhole-tailscale-{}.json", uuid::Uuid::now_v7()));
-    let args = vec![
-        "serve".to_owned(),
-        "get-config".to_owned(),
-        path.to_string_lossy().into_owned(),
-        "--all".to_owned(),
-    ];
-    let result = api.command(&args).await?;
-    let _removed = std::fs::remove_file(path);
+    let result = api.command(&strings(["serve", "get-config", "--all"])).await?;
     require_success(&result, "tailscale serve get-config")
 }
 

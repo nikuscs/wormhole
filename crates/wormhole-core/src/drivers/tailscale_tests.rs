@@ -12,7 +12,9 @@ use crate::{
     model::{EndpointSpec, ServiceProto},
 };
 
-use super::{CommandResult, TailscaleApi, TailscaleDriver, install_args, public_url};
+use super::{
+    CommandResult, TailscaleApi, TailscaleDriver, install_args, public_url, snapshot_config,
+};
 
 struct FakeApi {
     calls: Mutex<Vec<Vec<String>>>,
@@ -125,6 +127,16 @@ fn spec(qualifier: Option<&str>) -> EndpointSpec {
         capture_body_max: 1024 * 1024,
         reservation: None,
     }
+}
+
+#[tokio::test]
+async fn snapshot_config_places_selector_before_any_positional_argument() {
+    let api = Arc::new(FakeApi { calls: Mutex::new(Vec::new()), installed: Mutex::new(None) });
+    let tailscale_api: Arc<dyn TailscaleApi> = api.clone();
+
+    snapshot_config(&tailscale_api).await.expect("snapshot config");
+
+    assert_eq!(api.calls.lock().as_slice(), [["serve", "get-config", "--all"]]);
 }
 
 #[tokio::test]
