@@ -7,6 +7,14 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- Tailscale endpoints failed with a 502 on Tailscale 1.98 and newer because the Serve configuration
+  snapshot passed `--all` after an obsolete output-file positional argument. Wormhole now reads the
+  snapshot from stdout with the selector in the required position.
+- The signed local release flow failed under macOS Bash 3.2 when no explicit signing keychain was
+  configured because it expanded an empty array under `set -u`.
+
 ## [0.2.1] - 2026-08-11
 
 ### Fixed
